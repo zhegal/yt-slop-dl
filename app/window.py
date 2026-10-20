@@ -234,11 +234,20 @@ class Window(QWidget):
         self.detail.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.detail.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         inner.addWidget(self.detail)
+        self.result_actions = QWidget()
+        actions = QHBoxLayout(self.result_actions)
+        actions.setContentsMargins(0, 0, 0, 0)
+        self.open_file = QPushButton(self.t("open_file"))
+        self.open_file.setMinimumHeight(36)
+        self.open_file.clicked.connect(self._open_file)
+        actions.addWidget(self.open_file)
         self.open_folder = QPushButton(self.t("open"))
         self.open_folder.setMinimumHeight(36)
         self.open_folder.clicked.connect(self._open_folder)
-        self.open_folder.hide()
-        inner.addWidget(self.open_folder, alignment=Qt.AlignmentFlag.AlignLeft)
+        actions.addWidget(self.open_folder)
+        actions.addStretch()
+        self.result_actions.hide()
+        inner.addWidget(self.result_actions)
         layout.addWidget(card)
         folder_row = QHBoxLayout()
         self.destination = QLabel(self.t("destination", folder=self.downloads))
@@ -296,7 +305,7 @@ class Window(QWidget):
         self.language = language
         for widget, key in (
             (self.title, "title"), (self.subtitle, "subtitle"), (self.download, "analysis"),
-            (self.cancel, "cancel"), (self.confirm, "confirm"), (self.open_folder, "open"),
+            (self.cancel, "cancel"), (self.confirm, "confirm"), (self.open_file, "open_file"), (self.open_folder, "open"),
             (self.video_check, "video"), (self.audio_check, "audio"), (self.quality_label, "quality"),
             (self.container_label, "container"), (self.container_note, "container_hint"),
             (self.choose_folder, "choose_folder"), (self.footer, "first_run"), (self.language_label, "language"),
@@ -369,7 +378,7 @@ class Window(QWidget):
         self._info = None
         self._selection = None
         self.preview.hide()
-        self.open_folder.hide()
+        self.result_actions.hide()
         self._formats = []
         self._set_status("preparing")
         self._set_detail("first_run")
@@ -389,7 +398,7 @@ class Window(QWidget):
             self._set_detail("hint")
             self.progress.setRange(0, 1000)
             self.progress.setValue(0)
-            self.open_folder.hide()
+            self.result_actions.hide()
 
     def _show_info(self, info):
         self._info = info
@@ -488,7 +497,8 @@ class Window(QWidget):
                 return
             self._check_destination()
             self._formats = []
-            self.open_folder.hide()
+            self.result_path = None
+            self.result_actions.hide()
             self._set_status("preparing")
             self._set_detail()
             self.progress.setRange(0, 0)
@@ -577,8 +587,9 @@ class Window(QWidget):
         elif outcome == "success":
             self.result_path = Path(message)
             self._set_detail(text=self.result_path.name)
-            self.open_folder.show()
+            self.result_actions.show()
         else:
+            self.result_actions.hide()
             self._last_error = message
             self._show_error(message, auth_hint=outcome == "error")
         self.progress.setAccessibleName(self.status.text())
@@ -713,6 +724,16 @@ class Window(QWidget):
             self._settings.setValue("download_folder", folder)
             self._settings.sync()
             self._check_destination()
+
+    def _open_file(self):
+        if self.result_path is None:
+            return
+        try:
+            opened = self.result_path.is_file() and QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.result_path)))
+        except OSError:
+            opened = False
+        if not opened:
+            self._set_detail("open_file_error", file=self.result_path.name)
 
     def _open_folder(self):
         folder = self.result_path.parent if self.result_path else self.downloads

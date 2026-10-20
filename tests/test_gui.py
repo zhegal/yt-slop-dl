@@ -114,14 +114,45 @@ def test_window_launch_and_validation(qt_app, language):
         assert window.status.text() == translate(language, "invalid_url")
         assert not window.downloader.busy
         assert not window.open_folder.isVisible()
+        assert not window.open_file.isVisible()
         window._finished("error", "controlled failure")
         assert "controlled failure" in window.detail.text()
         window._finished("success", "/tmp/Відео.mp4")
         assert window.open_folder.isVisible()
+        assert window.open_file.isVisible()
         assert window.detail.text() == "Відео.mp4"
         window._finished("cancelled", "")
     finally:
         window.close()
+
+
+@pytest.mark.parametrize('language', ['en', 'ru', 'uk'])
+@pytest.mark.parametrize('suffix', ['.mp4', '.m4a'])
+def test_open_downloaded_file_uses_default_app_and_handles_missing_file(qt_app, tmp_path, monkeypatch, language, suffix):
+    from PySide6.QtGui import QDesktopServices
+    window = Window(language)
+    window.show()
+    media = tmp_path / ('Моє відео #100%' + suffix)
+    media.write_bytes(b'fixture')
+    opened = []
+    monkeypatch.setattr(QDesktopServices, 'openUrl', lambda url: opened.append(url.toLocalFile()) or True)
+    window._finished('success', str(media))
+    qt_app.processEvents()
+    assert window.open_file.text() == translate(language, 'open_file')
+    assert window.open_file.x() < window.open_folder.x()
+    window.open_file.click()
+    assert opened == [str(media)]
+    monkeypatch.setattr(QDesktopServices, 'openUrl', lambda _: False)
+    window.open_file.click()
+    assert window.detail.text() == translate(language, 'open_file_error', file=media.name)
+    media.unlink()
+    monkeypatch.setattr(QDesktopServices, 'openUrl', lambda url: opened.append(url.toLocalFile()) or True)
+    window.open_file.click()
+    assert opened == [str(media)]
+    assert 'Моє відео' in window.detail.text()
+    window.url.setText('https://youtu.be/abcdefghijk')
+    assert not window.open_file.isVisible() and not window.open_folder.isVisible()
+    window.close()
 
 
 def test_progress_unknown_totals_and_theme(qt_app):
