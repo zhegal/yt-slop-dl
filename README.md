@@ -68,7 +68,21 @@ python build.py
 
 Run on the target OS with `.[build]` installed. PyInstaller creates an application under `dist/`: a clickable `.app` on macOS, an `.exe` directory on Windows, or a Linux executable with a local `.desktop` launcher. Keep the generated bundle together. Components are installed on first inspection, independently of the bundle. A macOS bundle can be moved to Applications.
 
-macOS builds use the existing stable bundle ID `YT Slop DL` and a real code-signing certificate from Keychain. If exactly one valid identity exists, it is selected automatically. Otherwise run `python build.py --codesign-identity '<certificate SHA-1 or name>'`. A successful build remembers its certificate SHA-1 in Git-ignored `config.local.signing.json`; private keys stay in Keychain. Later builds fail if that identity is unavailable instead of silently falling back to ad-hoc signing. Permissions must be granted once when migrating from the old ad-hoc build, then remain associated with the same signed app across rebuilds. Changing the bundle ID or signing identity can require new permission. `--ad-hoc` explicitly creates a disposable build without this guarantee. Development signing is for local use; notarization and distribution signing remain outside the MVP.
+### macOS DMG
+
+macOS builds use the existing stable bundle ID `YT Slop DL` and a real code-signing certificate from Keychain. If exactly one valid identity exists, it is selected automatically. Otherwise run `python build.py --codesign-identity '<certificate SHA-1 or name>'`. A successful build remembers its certificate SHA-1 in Git-ignored `config.local.signing.json`; private keys stay in Keychain. Later builds fail if that identity is unavailable instead of silently falling back to ad-hoc signing. Permissions must be granted once when migrating from the old ad-hoc build, then remain associated with the same signed app across rebuilds. Changing the bundle ID or signing identity can require new permission. `--ad-hoc` explicitly creates a disposable build without this guarantee.
+
+To create a shareable macOS disk image, use a separate build environment with universal Python:
+
+```sh
+python3 -m venv build/macos-env
+build/macos-env/bin/python -m pip install -e '.[dev,build]' -r packaging/requirements-macos.txt
+build/macos-env/bin/python build.py --target-arch universal2 --dmg
+```
+
+The pinned public Qt 6.8 wheels support macOS 12+ on Intel and Apple Silicon. The compressed DMG in `dist/` contains the app, an Applications shortcut and installation instructions. Drag the app into Applications; Python is bundled and private tools install on first analysis. Personal settings, imported sessions and downloads are excluded. The bundle records its version and the actual minimum macOS version required by all its native libraries. Third-party notices and licenses are included inside `Contents/Resources/licenses`. Older macOS releases and physical Intel hardware have not been tested.
+
+The current Apple Development signature is not a notarized Developer ID distribution signature. Recipients may need **System Settings → Privacy & Security → Open Anyway** after the first blocked launch; see [Apple's instructions](https://support.apple.com/102445). Only override this for a file from a trusted sender. Developer ID signing/notarization is not configured.
 
 ## MVP limits
 

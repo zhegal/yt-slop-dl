@@ -1,0 +1,33 @@
+YT Slop DL {version} — macOS {minimum}+ — {architecture}
+
+УСТАНОВКА
+1. Перетащите YT Slop DL в Applications («Программы»).
+2. Откройте приложение из «Программ». После установки образ DMG можно извлечь.
+3. Это тестовая сборка без нотариализации Apple. Если macOS блокирует запуск,
+   откройте «Системные настройки → Конфиденциальность и безопасность»
+   и выберите Open Anyway («Всё равно открыть») для YT Slop DL.
+   Делайте это только для файла, полученного от человека, которому доверяете.
+4. Python устанавливать не нужно. При первом анализе потребуется интернет:
+   приложение само загрузит yt-dlp, FFmpeg и Deno.
+5. Для роликов с авторизацией откройте «Авторизация», выберите браузер
+   с вашим входом в YouTube и импортируйте сессию. Доступ к браузеру нужен
+   только при импорте; далее используется локально сохранённая сессия.
+
+Работает с Apple Silicon (M1 и новее) и Intel в универсальной сборке universal2.
+Версия arm64 предназначена только для Apple Silicon, x86_64 — для Intel.
+Интерфейс: русский, украинский, английский.
+В этом пакете нет личных настроек, cookies или видео разработчика.
+
+INSTALLATION
+1. Drag YT Slop DL to Applications, then launch it from Applications.
+2. Eject the DMG after installation.
+3. This test build is not notarized by Apple. If macOS blocks it, use
+   System Settings → Privacy & Security → Open Anyway for this app only.
+   Only allow a file received from someone you trust.
+4. Python is included. Internet is needed on first analysis to install
+   the private yt-dlp, FFmpeg and Deno components automatically.
+5. Authorization is optional. Import your own signed-in browser session
+   in Authorization to access videos available to your YouTube account.
+
+Apple guidance: https://support.apple.com/102445
+Third-party licenses and source links: inside the app, Contents/Resources/licenses.

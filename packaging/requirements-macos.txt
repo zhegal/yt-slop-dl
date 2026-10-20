@@ -1,0 +1,2 @@
+# Public universal2 wheels support macOS 12+, unlike newer local Qt builds.
+PySide6-Essentials==6.8.3

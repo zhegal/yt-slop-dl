@@ -1,0 +1,19 @@
+YT Slop DL — bundled runtime components
+
+Python 3.12: Python Software Foundation License and incorporated notices.
+Source: https://www.python.org/downloads/source/
+License text: Python-LICENSE.txt
+
+Qt for Python (PySide6 Essentials and Shiboken6), Qt Company and contributors:
+LGPL version 3 option. Dynamic libraries are in Contents/Frameworks.
+License texts: LGPL-3.0.txt and GPL-3.0.txt.
+Sources and notices: https://code.qt.io/cgit/pyside/pyside-setup.git/
+Qt sources and third-party attributions: https://code.qt.io/cgit/qt/qtbase.git/
+https://doc.qt.io/qt-6/licenses-used-in-qt.html
+
+PyInstaller bootloader: GPL with the exception for bundled applications.
+License and exception: PyInstaller-COPYING.txt
+Source: https://github.com/pyinstaller/pyinstaller
+
+yt-dlp, FFmpeg and Deno are downloaded separately on first use and are not
+included in this disk image. Their publishers' licenses apply.
