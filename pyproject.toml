@@ -22,7 +22,7 @@ yt-slop-dl = "app.main:main"
 include = ["app*"]
 
 [tool.setuptools.package-data]
-app = ["assets/*.svg"]
+app = ["assets/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

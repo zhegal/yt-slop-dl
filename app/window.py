@@ -69,7 +69,7 @@ class Window(QWidget):
         self._selection = None
         self.result_path = None
         self.setWindowTitle(APP_NAME)
-        self.setWindowIcon(QIcon(str(Path(__file__).parent / "assets" / "icon.svg")))
+        self.setWindowIcon(QIcon(str(Path(__file__).parent / "assets" / "icon.png")))
         self.resize(700, 420)
         # Let the layout calculate the minimum height as visible content changes.
         self.setMinimumWidth(580)

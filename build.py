@@ -12,39 +12,43 @@ def main():
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QImage, QPainter
-    from PySide6.QtSvg import QSvgRenderer
     from PySide6.QtWidgets import QApplication
     application = QApplication([])
     assets = root / "build" / "icons"
     assets.mkdir(parents=True, exist_ok=True)
-    renderer = QSvgRenderer(str(root / "app" / "assets" / "icon.svg"))
+    # Keep the background full bleed: macOS applies its own rounded icon mask.
+    # Transparent padding would reveal a system plate around the artwork.
+    source = QImage(str(root / "app" / "assets" / "icon.png"))
+    if source.isNull() or source.width() != source.height():
+        raise RuntimeError("The application icon must be a valid square PNG.")
 
     def render(size, target, format="PNG"):
         image = QImage(size, size, QImage.Format.Format_ARGB32)
         image.fill(Qt.GlobalColor.transparent)
         painter = QPainter(image)
-        renderer.render(painter)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.drawImage(image.rect(), source)
         painter.end()
         if not image.save(str(target), format):
             raise RuntimeError(f"Cannot create icon: {target}")
 
     system = platform.system()
     if system == "Darwin":
-        iconset = assets / "YTSlopDL.iconset"
+        iconset = assets / "YTSlopDL-Lemon-FullBleed.iconset"
         iconset.mkdir(exist_ok=True)
         for size in (16, 32, 128, 256, 512):
             render(size, iconset / f"icon_{size}x{size}.png")
             render(size * 2, iconset / f"icon_{size}x{size}@2x.png")
-        icon = assets / "YTSlopDL.icns"
+        icon = assets / "YTSlopDL-Lemon-FullBleed.icns"
         subprocess.run(["iconutil", "-c", "icns", "-o", str(icon), str(iconset)], check=True)
     elif system == "Windows":
-        icon = assets / "YTSlopDL.ico"
+        icon = assets / "YTSlopDL-Lemon-FullBleed.ico"
         render(256, icon, "ICO")
     else:
-        icon = assets / "YTSlopDL.png"
+        icon = assets / "YTSlopDL-Lemon-FullBleed.png"
         render(256, icon)
     subprocess.run([
-        sys.executable, "-m", "PyInstaller", "--noconfirm", "--onedir", "--windowed",
+        sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "--onedir", "--windowed",
         "--name", "YT Slop DL", "--paths", str(root),
         "--icon", str(icon), "--add-data", f"{root / 'app' / 'assets'}{os.pathsep}app/assets",
         str(root / "app" / "main.py"),

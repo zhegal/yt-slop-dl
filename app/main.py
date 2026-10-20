@@ -9,6 +9,8 @@ def main() -> int:
         return worker_main()
 
     import argparse
+    from pathlib import Path
+    from PySide6.QtGui import QIcon
     from PySide6.QtWidgets import QApplication
     from app.window import Window
 
@@ -19,6 +21,7 @@ def main() -> int:
     application.setApplicationName("YT Slop DL")
     application.setApplicationVersion("0.1.0")
     application.setOrganizationName("YT Slop DL")
+    application.setWindowIcon(QIcon(str(Path(__file__).parent / "assets" / "icon.png")))
     window = Window(args.language)
     window.show()
     return application.exec()
