@@ -1,6 +1,9 @@
-"""Three small UI dictionaries, selected from the system locale."""
+"""Three small UI dictionaries and native language names."""
+
+LANGUAGES = {"ru": "Русский", "uk": "Українська", "en": "English"}
 
 TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then click Download.',
+        'language': 'App language',
         'auth_title': 'YouTube authorization',
         'auth_button': 'Authorization: {source}…',
         'auth_source': 'Cookie source',
@@ -71,6 +74,7 @@ TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then 
         'video_only_unavailable': 'This quality has no separate video stream. Choose another quality or '
                                   'include audio.'},
  'ru': {'choose_container': 'Выберите качество, потоки и контейнер, затем нажмите «Скачать».',
+        'language': 'Язык приложения',
         'auth_title': 'Авторизация YouTube',
         'auth_button': 'Авторизация: {source}…',
         'auth_source': 'Источник cookies',
@@ -141,6 +145,7 @@ TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then 
         'video_only_unavailable': 'Для этого качества нет отдельного видеопотока. Выберите другое качество '
                                   'или включите аудио.'},
  'uk': {'choose_container': 'Виберіть якість, потоки й контейнер, потім натисніть «Завантажити».',
+        'language': 'Мова застосунку',
         'auth_title': 'Авторизація YouTube',
         'auth_button': 'Авторизація: {source}…',
         'auth_source': 'Джерело cookies',

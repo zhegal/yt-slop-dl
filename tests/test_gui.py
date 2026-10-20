@@ -347,3 +347,111 @@ def test_auth_selection_persists_invalidation_and_dispatch(qt_app, monkeypatch, 
     window._finished('error', 'auth_file_invalid')
     assert 'Netscape' in window.detail.text()
     window.close()
+
+
+def test_language_switch_preserves_preview_selection_and_restores_after_restart(qt_app, isolated_settings, monkeypatch):
+    from test_media import selectable_info
+    window = Window('en')
+    window.show()
+    info = selectable_info() | {'url': 'https://www.youtube.com/watch?v=abcdefghijk'}
+    window.url.setText(info['url'])
+    window._show_info(info)
+    window.quality.setCurrentIndex(window.quality.findData('low'))
+    window.container.setCurrentIndex(window.container.findData('mkv'))
+    before = window._selection.copy()
+    calls = []
+    monkeypatch.setattr(window.downloader, 'start', lambda *args, **kw: calls.append(kw))
+    for language in ('ru', 'uk', 'en'):
+        window.language_combo.setCurrentIndex(window.language_combo.findData(language))
+        assert window.language == language
+        assert window.download.text() == translate(language, 'analysis')
+        assert window.confirm.text() == translate(language, 'confirm')
+        assert window.video_check.text() == translate(language, 'video')
+        assert window.language_label.text() == translate(language, 'language')
+        assert window.destination.text() == translate(language, 'destination', folder=window.downloads)
+        assert window.status.text() == translate(language, 'inspected')
+        assert translate(language, 'duration', value='1:01')[:5] in window.video_meta.text()
+        assert window._selection == before and window._info == info and window.preview.isVisible()
+        assert window.container.currentData() == 'mkv'
+        assert window.quality.currentData() == 'low'
+        assert not calls
+        fresh = Window()
+        assert fresh.language == language and fresh.language_combo.currentData() == language
+        fresh.close()
+    window.language_combo.setCurrentIndex(window.language_combo.findData('uk'))
+    settings_path = isolated_settings().fileName()
+    result = subprocess.run([sys.executable, '-c',
+        'from PySide6.QtCore import QSettings; import sys; '
+        'print(QSettings(sys.argv[1], QSettings.Format.IniFormat).value("ui_language"))', settings_path],
+        capture_output=True, text=True, encoding='utf-8', check=True, timeout=10)
+    assert result.stdout.strip() == 'uk'
+    # Source-specific dialogs use the newly selected language too.
+    from app.auth_dialog import AuthDialog
+    dialog = AuthDialog(window.language, window._auth, window)
+    assert dialog.windowTitle() == translate('uk', 'auth_title')
+    dialog.close()
+    window.close()
+
+
+def test_language_switch_keeps_active_download_and_translates_progress(qt_app, monkeypatch):
+    window = Window('en')
+    window.url.setText('https://youtu.be/abcdefghijk')
+    window.downloader.busy = True
+    window._busy(True)
+    calls = []
+    monkeypatch.setattr(window.downloader, 'start', lambda *a, **kw: calls.append('start'))
+    monkeypatch.setattr(window.downloader, 'cancel', lambda: calls.append('cancel'))
+    window._event({'type': 'progress', 'downloaded': 50, 'total': 100,
+                   'speed': 1024, 'eta': 62, 'format': '137'})
+    window.language_combo.setCurrentIndex(window.language_combo.findData('ru'))
+    assert window.downloader.busy and window.progress.value() == 500
+    assert window.status.text() == translate('ru', 'downloading', stream=1, percent='50.0%')
+    assert 'Осталось 01:02' in window.detail.text()
+    assert window._formats == ['137'] and not calls
+    assert not window.url.isEnabled() and not window.download.isEnabled() and window.cancel.isEnabled()
+    window.downloader.busy = False
+    window._busy(False)
+    window.close()
+
+
+def test_choosing_current_language_still_saves_preference(qt_app, isolated_settings):
+    window = Window('en')
+    assert not isolated_settings().contains('ui_language')
+    window.language_combo.activated.emit(window.language_combo.currentIndex())
+    assert isolated_settings().value('ui_language') == 'en'
+    window.close()
+
+
+def test_language_switch_preserves_result_errors_and_localizes_messages(qt_app):
+    window = Window('en')
+    window.show()
+    window._finished('success', '/tmp/Моє відео.mp4')
+    window.language_combo.setCurrentIndex(window.language_combo.findData('ru'))
+    assert window.status.text() == translate('ru', 'success')
+    assert window.detail.text() == 'Моє відео.mp4'
+    assert window.open_folder.isVisible()
+    assert window.result_path == Path('/tmp/Моє відео.mp4')
+    window._finished('error', 'auth_file_invalid')
+    window.language_combo.setCurrentIndex(window.language_combo.findData('uk'))
+    assert window.detail.text() == translate('uk', 'auth_file_invalid')
+    window._auth = {'source': 'browser', 'browser': 'firefox', 'profile': ''}
+    window._finished('error', 'Upstream diagnostic')
+    window.language_combo.setCurrentIndex(window.language_combo.findData('en'))
+    assert window.detail.text() == 'Upstream diagnostic\n\n' + translate('en', 'auth_error_hint')
+    window.close()
+
+
+@pytest.mark.parametrize('saved', ['', 'de', 'uk'])
+def test_saved_language_fallback_and_explicit_launch_override(qt_app, isolated_settings, monkeypatch, saved):
+    from PySide6.QtCore import QLocale
+    settings = isolated_settings()
+    settings.setValue('ui_language', saved)
+    settings.sync()
+    monkeypatch.setattr('app.window.QLocale.system', lambda: QLocale('ru_RU'))
+    window = Window()
+    assert window.language == ('uk' if saved == 'uk' else 'ru')
+    window.close()
+    override = Window('en')
+    assert override.language == 'en'
+    assert isolated_settings().value('ui_language') == saved
+    override.close()

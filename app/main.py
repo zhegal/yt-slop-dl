@@ -13,7 +13,7 @@ def main() -> int:
     from app.window import Window
 
     parser = argparse.ArgumentParser(description="YT Slop DL")
-    parser.add_argument("--language", choices=("ru", "uk", "en"), help="Override the system UI language")
+    parser.add_argument("--language", choices=("ru", "uk", "en"), help="Override saved/system UI language for this launch")
     args = parser.parse_args()
     application = QApplication([sys.argv[0]])
     application.setApplicationName("YT Slop DL")

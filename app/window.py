@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 from app.downloader import Downloader, validate_url
 from app.auth import AUTH_ERRORS, normalize_auth
 from app.auth_dialog import AuthDialog
-from app.i18n import language_for, translate
+from app.i18n import LANGUAGES, language_for, translate
 from app.media import format_duration, select_streams
 from app import APP_NAME
 
@@ -35,8 +35,13 @@ def number(value):
 class Window(QWidget):
     def __init__(self, language: str | None = None):
         super().__init__()
-        self.language = language_for(language or QLocale.system().name())
         self._settings = QSettings()
+        saved_language = self._settings.value("ui_language", "", type=str)
+        self.language = language_for(language or (saved_language if saved_language in LANGUAGES else QLocale.system().name()))
+        self._status_text = ("ready", {})
+        self._detail_text = ("hint", {})
+        self._progress_detail = None
+        self._last_error = ""
         try:
             self._auth = normalize_auth(json.loads(self._settings.value("authentication", "{}", type=str)))
         except (ValueError, TypeError):
@@ -67,16 +72,17 @@ class Window(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 30, 32, 24)
         layout.setSpacing(18)
-        title = QLabel(self.t("title"))
+        self.title = QLabel(self.t("title"))
         font = QFont(self.font())
         font.setPointSize(21)
         font.setWeight(QFont.Weight.DemiBold)
-        title.setFont(font)
-        layout.addWidget(title)
-        subtitle = QLabel(self.t("subtitle"))
-        subtitle.setObjectName("muted")
-        subtitle.setWordWrap(True)
-        layout.addWidget(subtitle)
+        self.title.setFont(font)
+        self.title.setWordWrap(True)
+        layout.addWidget(self.title)
+        self.subtitle = QLabel(self.t("subtitle"))
+        self.subtitle.setObjectName("muted")
+        self.subtitle.setWordWrap(True)
+        layout.addWidget(self.subtitle)
         row = QHBoxLayout()
         row.setSpacing(10)
         self.url = QLineEdit()
@@ -100,7 +106,23 @@ class Window(QWidget):
         self.authentication.setMinimumHeight(32)
         self.authentication.clicked.connect(self._configure_auth)
         self._update_auth_button()
-        layout.addWidget(self.authentication, alignment=Qt.AlignmentFlag.AlignLeft)
+        options_row = QHBoxLayout()
+        options_row.addWidget(self.authentication)
+        options_row.addStretch()
+        self.language_label = QLabel(self.t("language"))
+        self.language_combo = QComboBox()
+        self.language_combo.setAccessibleName(self.t("language"))
+        self.language_combo.setMinimumHeight(32)
+        for code, name in LANGUAGES.items():
+            self.language_combo.addItem(name, code)
+        self.language_combo.setCurrentIndex(self.language_combo.findData(self.language))
+        self.language_combo.currentIndexChanged.connect(self._change_language)
+        # Selecting the already displayed system language is an explicit choice too.
+        self.language_combo.activated.connect(self._change_language)
+        self.language_label.setBuddy(self.language_combo)
+        options_row.addWidget(self.language_label)
+        options_row.addWidget(self.language_combo)
+        layout.addLayout(options_row)
 
         self.preview = QFrame()
         self.preview.setObjectName("preview")
@@ -134,7 +156,8 @@ class Window(QWidget):
         self.qualities.setWordWrap(True)
         preview_layout.addWidget(self.qualities)
         quality_row = QHBoxLayout()
-        quality_row.addWidget(QLabel(self.t("quality")))
+        self.quality_label = QLabel(self.t("quality"))
+        quality_row.addWidget(self.quality_label)
         self.quality = QComboBox()
         self.quality.setAccessibleName(self.t("quality"))
         self.quality.setMinimumHeight(36)
@@ -148,7 +171,8 @@ class Window(QWidget):
             quality_row.addWidget(checkbox)
         preview_layout.addLayout(quality_row)
         selection = QHBoxLayout()
-        selection.addWidget(QLabel(self.t("container")))
+        self.container_label = QLabel(self.t("container"))
+        selection.addWidget(self.container_label)
         self.container = QComboBox()
         self.container.setAccessibleName(self.t("container"))
         self.container.setMinimumHeight(36)
@@ -159,10 +183,10 @@ class Window(QWidget):
         self.confirm.clicked.connect(self._confirm_download)
         selection.addWidget(self.confirm)
         preview_layout.addLayout(selection)
-        container_note = QLabel(self.t("container_hint"))
-        container_note.setObjectName("muted")
-        container_note.setWordWrap(True)
-        preview_layout.addWidget(container_note)
+        self.container_note = QLabel(self.t("container_hint"))
+        self.container_note.setObjectName("muted")
+        self.container_note.setWordWrap(True)
+        preview_layout.addWidget(self.container_note)
         self.preview.hide()
         layout.addWidget(self.preview)
 
@@ -220,10 +244,10 @@ class Window(QWidget):
         self.folder_watcher = QFileSystemWatcher(self)
         self.folder_watcher.directoryChanged.connect(self._check_destination)
         self._check_destination()
-        footer = QLabel(self.t("first_run"))
-        footer.setObjectName("muted")
-        footer.setWordWrap(True)
-        layout.addWidget(footer)
+        self.footer = QLabel(self.t("first_run"))
+        self.footer.setObjectName("muted")
+        self.footer.setWordWrap(True)
+        layout.addWidget(self.footer)
         layout.addStretch()
         QGuiApplication.styleHints().colorSchemeChanged.connect(self._theme)
         self._theme()
@@ -231,6 +255,66 @@ class Window(QWidget):
 
     def t(self, key, **values):
         return translate(self.language, key, **values)
+
+    def _set_status(self, key, **values):
+        self._status_text = (key, values)
+        self.status.setText(self.t(key, **values))
+        self.progress.setAccessibleName(self.status.text())
+
+    def _set_detail(self, key=None, *, text="", **values):
+        self._detail_text = (key, values if key else {"text": text})
+        self._progress_detail = None
+        self.detail.setText(self.t(key, **values) if key else text)
+
+    def _change_language(self, *_):
+        language = self.language_combo.currentData()
+        if language not in LANGUAGES:
+            return
+        self._settings.setValue("ui_language", language)
+        self._settings.sync()
+        if language == self.language:
+            return
+        self.language = language
+        for widget, key in (
+            (self.title, "title"), (self.subtitle, "subtitle"), (self.download, "analysis"),
+            (self.cancel, "cancel"), (self.confirm, "confirm"), (self.open_folder, "open"),
+            (self.video_check, "video"), (self.audio_check, "audio"), (self.quality_label, "quality"),
+            (self.container_label, "container"), (self.container_note, "container_hint"),
+            (self.choose_folder, "choose_folder"), (self.footer, "first_run"), (self.language_label, "language"),
+        ):
+            widget.setText(self.t(key))
+        for widget, key in ((self.url, "url"), (self.quality, "quality"), (self.container, "container"),
+                            (self.language_combo, "language")):
+            widget.setAccessibleName(self.t(key))
+        self._update_auth_button()
+        self.destination.setText(self.t("destination", folder=self.downloads))
+        # Repaint labels in place: changing language must preserve a running job,
+        # its progress, preview, chosen formats and saved file.
+        self._set_status(self._status_text[0], **self._status_text[1])
+        if self._status_text[0] == "error":
+            self._show_error(self._last_error)
+        elif self._progress_detail is not None:
+            self._set_progress_detail(self._progress_detail)
+        else:
+            self._set_detail(self._detail_text[0], **self._detail_text[1])
+        if self._info:
+            self._update_video_meta()
+            if self.thumbnail.text():
+                self.thumbnail.setText(self.t("no_thumbnail"))
+            video = self.video_check.isChecked()
+            options = self._info["video_options"] if video else self._info["audio_options"]
+            for index, option in enumerate(options):
+                self.quality.setItemText(index, self._quality_text(option, index, video))
+            self.container.setItemText(0, self.t("auto" if video else "auto_audio"))
+            for index in range(1, self.container.count()):
+                name = self.container.itemData(index).upper()
+                enabled = self.container.model().item(index).isEnabled()
+                self.container.setItemText(index, name if enabled else self.t("unavailable", container=name))
+            if not self._selection:
+                self.qualities.setText(self.detail.text())
+            else:
+                codecs = [self._selection[key].upper() for key in ("vcodec", "acodec") if self._selection[key] != "none"]
+                self.qualities.setText(self.t("selected_streams", value=" + ".join(codecs)))
 
     def _theme(self, *_):
         palette = self.palette()
@@ -256,7 +340,7 @@ class Window(QWidget):
         try:
             url = validate_url(self.url.text())
         except ValueError:
-            self.status.setText(self.t("invalid_url"))
+            self._set_status("invalid_url")
             self.url.setFocus()
             return
         self.result_path = None
@@ -265,8 +349,8 @@ class Window(QWidget):
         self.preview.hide()
         self.open_folder.hide()
         self._formats = []
-        self.status.setText(self.t("preparing"))
-        self.detail.setText(self.t("first_run"))
+        self._set_status("preparing")
+        self._set_detail("first_run")
         self.progress.setRange(0, 0)
         try:
             self.downloader.start(url, self.downloads, self.components, action="inspect", auth=self._auth)
@@ -279,8 +363,8 @@ class Window(QWidget):
         self.preview.hide()
         self.confirm.setEnabled(False)
         if not self.downloader.busy:
-            self.status.setText(self.t("ready"))
-            self.detail.setText(self.t("hint"))
+            self._set_status("ready")
+            self._set_detail("hint")
             self.progress.setRange(0, 1000)
             self.progress.setValue(0)
             self.open_folder.hide()
@@ -289,8 +373,7 @@ class Window(QWidget):
         self._info = info
         self.video_title.setText(info["title"])
         resolution = f"{info['height']}p" if info.get("height") else "—"
-        meta = [info.get("channel", ""), self.t("duration", value=format_duration(info.get("duration")))]
-        self.video_meta.setText("\n".join(part for part in meta if part))
+        self._update_video_meta()
         self.qualities.setText(self.t("qualities", values=", ".join(f"{height}p" for height in info.get("resolutions", [])) or resolution))
         self.thumbnail.clear()
         self.thumbnail.setText(self.t("no_thumbnail"))
@@ -306,6 +389,23 @@ class Window(QWidget):
         self.preview.show()
         self.resize(max(self.width(), 740), max(self.height(), 680))
 
+    def _update_video_meta(self):
+        meta = [self._info.get("channel", ""), self.t("duration", value=format_duration(self._info.get("duration")))]
+        self.video_meta.setText("\n".join(part for part in meta if part))
+
+    def _quality_text(self, option, index, video):
+        if video:
+            label = f"{option.get('height') or '—'}p"
+            if option.get("fps"):
+                label += f" · {option['fps']:g} fps"
+        else:
+            label = option["acodec"].upper()
+            if option.get("abr"):
+                label += f" · {option['abr']:.0f} kbit/s"
+            if option.get("drc"):
+                label += " · DRC"
+        return self.t("best_quality", value=label) if index == 0 else label
+
     def _refresh_quality_options(self, *_):
         if not self._info:
             return
@@ -315,17 +415,7 @@ class Window(QWidget):
         self.quality.blockSignals(True)
         self.quality.clear()
         for index, option in enumerate(options):
-            if video:
-                label = f"{option.get('height') or '—'}p"
-                if option.get("fps"):
-                    label += f" · {option['fps']:g} fps"
-            else:
-                label = option["acodec"].upper()
-                if option.get("abr"):
-                    label += f" · {option['abr']:.0f} kbit/s"
-                if option.get("drc"):
-                    label += " · DRC"
-            self.quality.addItem(self.t("best_quality", value=label) if index == 0 else label, str(option["format_id"]))
+            self.quality.addItem(self._quality_text(option, index, video), str(option["format_id"]))
         restored = self.quality.findData(previous)
         if restored >= 0:
             self.quality.setCurrentIndex(restored)
@@ -340,7 +430,7 @@ class Window(QWidget):
         try:
             self._selection = select_streams(self._info, self.quality.currentData(), video, audio)
         except ValueError as error:
-            self.detail.setText(self.t(str(error)))
+            self._set_detail(str(error))
         previous = self.container.currentData()
         self.container.clear()
         self.container.addItem(self.t("auto") if video else self.t("auto_audio"), "auto")
@@ -355,8 +445,8 @@ class Window(QWidget):
             codecs = [self._selection[key].upper() for key in ("vcodec", "acodec") if self._selection[key] != "none"]
             self.qualities.setText(self.t("selected_streams", value=" + ".join(codecs)))
             if not self.downloader.busy:
-                self.status.setText(self.t("inspected"))
-                self.detail.setText(self.t("choose_container"))
+                self._set_status("inspected")
+                self._set_detail("choose_container")
         else:
             self.qualities.setText(self.detail.text())
         self.confirm.setEnabled(not self.downloader.busy and self._selection is not None)
@@ -376,8 +466,8 @@ class Window(QWidget):
             self._check_destination()
             self._formats = []
             self.open_folder.hide()
-            self.status.setText(self.t("preparing"))
-            self.detail.setText("")
+            self._set_status("preparing")
+            self._set_detail()
             self.progress.setRange(0, 0)
             self.downloader.start(self._info["url"], self.downloads, self.components,
                                   container=container, format_id=self._selection["format_id"],
@@ -401,7 +491,7 @@ class Window(QWidget):
             self._check_destination()
 
     def _cancel(self):
-        self.status.setText(self.t("cancelling"))
+        self._set_status("cancelling")
         self.cancel.setEnabled(False)
         self.downloader.cancel()
 
@@ -413,13 +503,13 @@ class Window(QWidget):
             self._show_info(event["info"])
         elif kind == "dependency":
             percent = event.get("percent")
-            self.status.setText(self.t("dependency", component=event["component"], percent=f"{percent}%" if percent is not None else ""))
+            self._set_status("dependency", component=event["component"], percent=f"{percent}%" if percent is not None else "")
             self.progress.setRange(0, 1000 if percent is not None else 0)
             if percent is not None:
                 self.progress.setValue(percent * 10)
         elif kind in {"extracting", "processing", "saving"}:
-            self.status.setText(self.t(kind))
-            self.detail.setText("")
+            self._set_status(kind)
+            self._set_detail()
             self.progress.setRange(0, 0)
         elif kind == "progress":
             downloaded, total = number(event.get("downloaded")), number(event.get("total"))
@@ -428,41 +518,57 @@ class Window(QWidget):
             if format_id not in self._formats:
                 self._formats.append(format_id)
             percent = f"{fraction * 100:.1f}%" if fraction is not None else "…"
-            self.status.setText(self.t("downloading", stream=len(self._formats), percent=percent))
+            self._set_status("downloading", stream=len(self._formats), percent=percent)
             self.progress.setRange(0, 1000 if fraction is not None else 0)
             if fraction is not None:
                 self.progress.setValue(int(fraction * 1000))
-            parts = [readable_size(downloaded)] if downloaded is not None else []
-            speed, eta = number(event.get("speed")), number(event.get("eta"))
-            if speed is not None:
-                parts.append(self.t("speed", value=readable_size(speed)))
-            if eta is not None:
-                minutes, seconds = divmod(int(eta), 60)
-                parts.append(self.t("eta", value=f"{minutes:02}:{seconds:02}"))
-            self.detail.setText(" · ".join(parts) or self.t("unknown"))
+            self._set_progress_detail(event)
         self.progress.setAccessibleName(self.status.text())
+
+    def _set_progress_detail(self, event):
+        downloaded = number(event.get("downloaded"))
+        parts = [readable_size(downloaded)] if downloaded is not None else []
+        speed, eta = number(event.get("speed")), number(event.get("eta"))
+        if speed is not None:
+            parts.append(self.t("speed", value=readable_size(speed)))
+        if eta is not None:
+            minutes, seconds = divmod(int(eta), 60)
+            parts.append(self.t("eta", value=f"{minutes:02}:{seconds:02}"))
+        if parts:
+            self._set_detail(text=" · ".join(parts))
+        else:
+            self._set_detail("unknown")
+        self._progress_detail = event.copy()
 
     def _finished(self, outcome, message):
         self.progress.setRange(0, 1000)
         self.progress.setValue(1000 if outcome == "success" else 0)
-        self.status.setText(self.t(outcome))
+        self._set_status(outcome)
         if outcome == "inspected":
-            self.detail.setText(self.t("choose_container"))
+            self._set_detail("choose_container")
         elif outcome == "success":
             self.result_path = Path(message)
-            self.detail.setText(self.result_path.name)
+            self._set_detail(text=self.result_path.name)
             self.open_folder.show()
         else:
-            # Keep upstream diagnostics, whose language is controlled by yt-dlp.
-            if message in AUTH_ERRORS:
-                message = self.t(message)
-            elif outcome == "error" and self._auth:
-                message = (message + "\n\n" + self.t("auth_error_hint")).strip()
-            self.detail.setText(message[:1000] if message else self.t("retry"))
-            self.detail.setToolTip(message)
+            self._last_error = message
+            self._show_error(message, auth_hint=outcome == "error")
         self.progress.setAccessibleName(self.status.text())
         if self._closing:
             QTimer.singleShot(0, self.close)
+
+    def _show_error(self, message, *, auth_hint=True):
+        # Keep upstream diagnostics; translate only the application's own messages.
+        if message in AUTH_ERRORS:
+            self._set_detail(message)
+            message = self.detail.text()
+        elif not message:
+            self._set_detail("retry")
+        else:
+            if auth_hint and self._auth:
+                message += "\n\n" + self.t("auth_error_hint")
+            self._set_detail(text=message[:1000])
+        self.detail.setToolTip(message)
 
     def _update_auth_button(self):
         source = self.t("auth_none")
@@ -529,7 +635,7 @@ class Window(QWidget):
     def _open_folder(self):
         folder = self.result_path.parent if self.result_path else self.downloads
         if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
-            self.detail.setText(self.t("open_error", folder=folder))
+            self._set_detail("open_error", folder=folder)
 
     def closeEvent(self, event):
         if self.downloader.busy:
