@@ -16,6 +16,7 @@ from app.auth import prepare_auth
 from app.dependencies import DependencyError, ensure_dependencies
 from app.downloader import build_arguments, build_inspection_arguments, error_message, parse_output, validate_url
 from app.media import summarize_info
+from app.updates import apply_update, check_for_updates, operation_lock
 
 
 class Cancelled(BaseException):
@@ -103,6 +104,7 @@ def run_download(request: dict) -> int:
     components = Path(request["components"])
     auth = prepare_auth(request.get("auth"), Path(request["auth_folder"]) if request.get("auth_folder") else None)
     tools = ensure_dependencies(components, emit)
+    apply_update(components, tools, emit, tool_environment(components))
     emit({"type": "extracting"})
     video, audio = request.get("video", True), request.get("audio", True)
     args = [str(tools["yt-dlp"]), *build_arguments(url, staging, tools, request.get("container", "auto"), request.get("format_id"), video=video, audio=audio, auth=auth)]
@@ -168,6 +170,7 @@ def run_inspection(request: dict) -> int:
     components = Path(request["components"])
     auth = prepare_auth(request.get("auth"), Path(request["auth_folder"]) if request.get("auth_folder") else None)
     tools = ensure_dependencies(components, emit)
+    apply_update(components, tools, emit, tool_environment(components))
     emit({"type": "extracting"})
     args = [str(tools["yt-dlp"]), *build_inspection_arguments(request["url"], tools, auth=auth)]
     info, lines = None, deque(maxlen=25)
@@ -194,6 +197,8 @@ def run_inspection(request: dict) -> int:
 
 def main() -> int:
     connect_stdio()
+    from PySide6.QtCore import QCoreApplication
+    application = QCoreApplication.instance() or QCoreApplication(["YT Slop DL worker"])
     if os.name != "nt":
         def cancel(signum, frame):
             raise Cancelled()
@@ -201,7 +206,11 @@ def main() -> int:
     try:
         # GUI attaches the Windows Job Object before sending this command.
         request = json.loads(sys.stdin.readline())
-        return run_inspection(request) if request.get("action") == "inspect" else run_download(request)
+        if request.get("action") == "check_updates":
+            emit({"type": "update_checked", **check_for_updates(Path(request["components"]))})
+            return 0
+        with operation_lock(Path(request["components"])):
+            return run_inspection(request) if request.get("action") == "inspect" else run_download(request)
     except Cancelled:
         return 130
     except (DependencyError, OSError, ValueError, KeyError, RuntimeError) as error:

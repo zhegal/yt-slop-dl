@@ -70,7 +70,7 @@ def test_checksum_mismatch_never_installs(tmp_path, monkeypatch):
     monkeypatch.setattr(deps, "release_assets", lambda *_: {"yt-dlp_macos": asset})
     class Response(io.BytesIO):
         headers = {"Content-Length": "3"}
-    monkeypatch.setattr(deps, "open_url", lambda _: Response(b"bad"))
+    monkeypatch.setattr(deps, "open_url", lambda _, **kw: Response(b"bad"))
     with pytest.raises(deps.DependencyError, match="verification failed"):
         deps.ensure_dependencies(tmp_path)
     assert not list(tmp_path.rglob("installed.json"))
@@ -99,7 +99,7 @@ def test_install_cache_and_repair(tmp_path, monkeypatch):
         @property
         def headers(self):
             return {"Content-Length": str(len(self.getvalue()))}
-    monkeypatch.setattr(deps, "open_url", lambda name: Response(payloads[name]))
+    monkeypatch.setattr(deps, "open_url", lambda name, **kw: Response(payloads[name]))
     tools = deps.ensure_dependencies(tmp_path)
     assert set(tools) == {"yt-dlp", "ffmpeg", "ffprobe", "deno"}
     assert all(path.is_file() for path in tools.values())

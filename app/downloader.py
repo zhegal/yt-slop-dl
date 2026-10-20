@@ -175,6 +175,15 @@ class Downloader(QObject):
                          "staging": str(self._staging) if self._staging else None,
                          "auth": auth, "auth_folder": str(self._auth_folder) if self._auth_folder else None,
                          "action": action, "container": container, "format_id": format_id, "video": video, "audio": audio}
+        self._launch()
+
+    def check_updates(self, components: Path):
+        if self.busy:
+            return
+        self._request = {"action": "check_updates", "components": str(components)}
+        self._launch()
+
+    def _launch(self):
         self._cancelled = False
         self._buffer = b""
         self._errors.clear()
@@ -226,6 +235,9 @@ class Downloader(QObject):
                 self._result = ("success", event.get("path", ""))
             elif kind == "metadata":
                 self._result = ("inspected", "")
+                self.event.emit(event)
+            elif kind == "update_checked":
+                self._result = ("update_checked", "")
                 self.event.emit(event)
             elif kind == "error":
                 self._result = ("error", event.get("message", "Unknown error"))

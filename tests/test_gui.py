@@ -17,6 +17,7 @@ def isolated_settings(tmp_path, monkeypatch):
     def create():
         return QSettings(str(tmp_path / 'preferences.ini'), QSettings.Format.IniFormat)
     monkeypatch.setattr('app.window.QSettings', create)
+    monkeypatch.setattr('app.window.Downloader.check_updates', lambda *_: None)
     return create
 
 
@@ -455,3 +456,53 @@ def test_saved_language_fallback_and_explicit_launch_override(qt_app, isolated_s
     assert override.language == 'en'
     assert isolated_settings().value('ui_language') == saved
     override.close()
+
+
+def test_startup_update_check_notice_and_controls(qt_app, monkeypatch):
+    from app.downloader import Downloader
+    from test_media import selectable_info
+    calls = []
+    def check(controller, components):
+        calls.append(components)
+        controller.busy = True
+        controller.busy_changed.emit(True)
+    monkeypatch.setattr(Downloader, 'check_updates', check)
+    window = Window('en')
+    window.show()
+    qt_app.processEvents()
+    assert calls == [window.components]
+    assert window.updater.busy and not window.download.isEnabled()
+    assert window.language_combo.isEnabled() and window.url.isEnabled()
+    info = selectable_info() | {'url': 'https://www.youtube.com/watch?v=abcdefghijk'}
+    window._show_info(info)
+    assert not window.confirm.isEnabled()
+    window.updater.event.emit({'type': 'update_checked', 'status': 'available', 'version': '2099.01.02'})
+    window.updater.busy = False
+    window.updater.busy_changed.emit(False)
+    window.updater.finished.emit('update_checked', '')
+    assert window.download.isEnabled() and window.confirm.isEnabled()
+    assert '2099.01.02' in window.update_notice.text()
+    window.language_combo.setCurrentIndex(window.language_combo.findData('ru'))
+    assert window.update_notice.text() == translate('ru', 'update_available', version='2099.01.02')
+    window._event({'type': 'update', 'status': 'failed', 'version': '2099.01.02'})
+    assert window.update_notice.text() == translate('ru', 'update_failed')
+    window.close()
+
+
+def test_closing_app_cancels_background_update_check(qt_app, monkeypatch):
+    from app.downloader import Downloader
+    calls = []
+    def check(controller, components):
+        controller.busy = True
+        controller.busy_changed.emit(True)
+    monkeypatch.setattr(Downloader, 'check_updates', check)
+    window = Window('en')
+    window.show()
+    qt_app.processEvents()
+    monkeypatch.setattr(window.updater, 'cancel', lambda: calls.append('cancel'))
+    window.close()
+    assert calls == ['cancel'] and window.isVisible()
+    window.updater.busy = False
+    window.updater.finished.emit('cancelled', '')
+    qt_app.processEvents()
+    assert not window.isVisible()

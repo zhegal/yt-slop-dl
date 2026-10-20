@@ -41,6 +41,9 @@ yt-dlp.exe
 yt-dlp*.exe
 yt-dlp_macos
 yt-dlp_linux*
+yt-dlp.previous/
+yt-dlp-update*.json
+yt-dlp-*.lock
 ffmpeg
 ffmpeg.exe
 ffmpeg-*

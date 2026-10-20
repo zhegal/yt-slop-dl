@@ -91,16 +91,20 @@ def verify_checksum(path: Path, expected: str) -> None:
         raise DependencyError(f"SHA-256 verification failed: {path.name}")
 
 
-def open_url(url: str):
+def open_url(url: str, *, timeout=30):
     if not url.startswith("https://"):
         raise DependencyError("Component downloads require HTTPS.")
     req = urllib.request.Request(url, headers={"User-Agent": "YTSlopDL/0.1", "Accept": "application/vnd.github+json"} if url.startswith("https://api.github.com/") else {"User-Agent": "YTSlopDL/0.1"})
-    return urllib.request.urlopen(req, timeout=30)
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def release_info(repo: str, release: str, *, timeout=30) -> dict:
+    with open_url(f"https://api.github.com/repos/{repo}/releases/{release}", timeout=timeout) as response:
+        return json.load(response)
 
 
 def release_assets(repo: str, release: str) -> dict:
-    with open_url(f"https://api.github.com/repos/{repo}/releases/{release}") as response:
-        data = json.load(response)
+    data = release_info(repo, release)
     return {asset["name"]: asset for asset in data["assets"]}
 
 
@@ -177,6 +181,19 @@ def cached_tools(folder: Path, names: set[str]) -> bool:
         return False
 
 
+def copy_cached_tools(source: Path, destination: Path, names: set[str]) -> None:
+    """Publish verified app-owned files with the manifest as the commit marker."""
+    if not cached_tools(source, names):
+        raise DependencyError("The previous yt-dlp installation failed integrity verification.")
+    with tempfile.TemporaryDirectory(prefix=".install-", dir=destination.parent) as temporary:
+        stage = Path(temporary)
+        for name in sorted(names) + ["installed.json"]:
+            shutil.copy2(source / name, stage / name)
+        destination.mkdir(exist_ok=True)
+        for name in sorted(names) + ["installed.json"]:
+            os.replace(stage / name, destination / name)
+
+
 def ensure_dependencies(root: Path, report: Callable = lambda event: None) -> dict[str, Path]:
     p = detect_platform()
     root = root / p.key
@@ -186,6 +203,11 @@ def ensure_dependencies(root: Path, report: Callable = lambda event: None) -> di
         names = {"ffmpeg" + p.suffix, "ffprobe" + p.suffix} if component == "ffmpeg" else {component + p.suffix}
         folder = root / component
         report({"type": "dependency", "component": component, "percent": None})
+        if component == "yt-dlp" and not cached_tools(folder, names):
+            previous = root / "yt-dlp.previous"
+            if cached_tools(previous, names):
+                copy_cached_tools(previous, folder, names)
+                report({"type": "update", "status": "restored", "version": ""})
         if not cached_tools(folder, names):
             try:
                 assets = release_assets(repo, release)

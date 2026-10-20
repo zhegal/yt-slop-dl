@@ -58,6 +58,11 @@ class Window(QWidget):
         self.downloader.event.connect(self._event)
         self.downloader.finished.connect(self._finished)
         self.downloader.busy_changed.connect(self._busy)
+        self.updater = Downloader(self)
+        self.updater.event.connect(self._update_event)
+        self.updater.busy_changed.connect(self._update_buttons)
+        self.updater.finished.connect(self._update_finished)
+        self._update_message = None
         self._closing = False
         self._formats = []
         self._info = None
@@ -248,10 +253,17 @@ class Window(QWidget):
         self.footer.setObjectName("muted")
         self.footer.setWordWrap(True)
         layout.addWidget(self.footer)
+        self.update_notice = QLabel()
+        self.update_notice.setObjectName("muted")
+        self.update_notice.setWordWrap(True)
+        self.update_notice.setTextFormat(Qt.TextFormat.PlainText)
+        self.update_notice.hide()
+        layout.addWidget(self.update_notice)
         layout.addStretch()
         QGuiApplication.styleHints().colorSchemeChanged.connect(self._theme)
         self._theme()
         self.url.setFocus()
+        QTimer.singleShot(0, self._check_updates)
 
     def t(self, key, **values):
         return translate(self.language, key, **values)
@@ -287,6 +299,9 @@ class Window(QWidget):
                             (self.language_combo, "language")):
             widget.setAccessibleName(self.t(key))
         self._update_auth_button()
+        if self._update_message:
+            key, values = self._update_message
+            self.update_notice.setText(self.t(key, **values))
         self.destination.setText(self.t("destination", folder=self.downloads))
         # Repaint labels in place: changing language must preserve a running job,
         # its progress, preview, chosen formats and saved file.
@@ -335,7 +350,7 @@ class Window(QWidget):
         """)
 
     def _start(self):
-        if self.downloader.busy:
+        if self.downloader.busy or self.updater.busy:
             return
         try:
             url = validate_url(self.url.text())
@@ -450,11 +465,12 @@ class Window(QWidget):
         else:
             self.qualities.setText(self.detail.text())
         self.confirm.setEnabled(not self.downloader.busy and self._selection is not None)
+        self._update_buttons()
         self.quality.setEnabled(not self.downloader.busy and (video or audio))
         self.container.setEnabled(not self.downloader.busy and self._selection is not None)
 
     def _confirm_download(self):
-        if self.downloader.busy or not self._info or not self._selection:
+        if self.downloader.busy or self.updater.busy or not self._info or not self._selection:
             return
         try:
             if validate_url(self.url.text()) != self._info["url"]:
@@ -487,6 +503,7 @@ class Window(QWidget):
         self.audio_check.setEnabled(not busy)
         self.choose_folder.setEnabled(not busy)
         self.authentication.setEnabled(not busy)
+        self._update_buttons()
         if not busy:
             self._check_destination()
 
@@ -499,7 +516,9 @@ class Window(QWidget):
         if self.downloader._cancelled:
             return
         kind = event.get("type")
-        if kind == "metadata":
+        if kind == "update":
+            self._update_event(event)
+        elif kind == "metadata":
             self._show_info(event["info"])
         elif kind == "dependency":
             percent = event.get("percent")
@@ -578,6 +597,38 @@ class Window(QWidget):
             source = self.t("auth_file")
         self.authentication.setText(self.t("auth_button", source=source))
 
+    def _check_updates(self):
+        if self._closing or not self.isVisible():
+            return
+        self._update_message = ("update_checking", {})
+        self.update_notice.setText(self.t("update_checking"))
+        self.update_notice.show()
+        self.updater.check_updates(self.components)
+
+    def _update_buttons(self, *_):
+        ready = not self.downloader.busy and not self.updater.busy
+        self.download.setEnabled(ready)
+        self.confirm.setEnabled(ready and self._selection is not None)
+
+    def _update_event(self, event):
+        status = event.get("status")
+        if status in {"available", "installing", "installed", "failed", "restored", "check_failed"}:
+            key = "update_" + status
+            values = {"version": event.get("version", "")}
+            self._update_message = (key, values)
+            self.update_notice.setText(self.t(key, **values))
+            self.update_notice.show()
+        else:
+            self._update_message = None
+            self.update_notice.hide()
+
+    def _update_finished(self, outcome, _):
+        if outcome == "error":
+            self._update_event({"status": "check_failed"})
+        self._update_buttons()
+        if self._closing:
+            QTimer.singleShot(0, self.close)
+
     def _configure_auth(self):
         if self.downloader.busy:
             return
@@ -638,9 +689,12 @@ class Window(QWidget):
             self._set_detail("open_error", folder=folder)
 
     def closeEvent(self, event):
-        if self.downloader.busy:
+        if self.downloader.busy or self.updater.busy:
             self._closing = True
-            self._cancel()
+            if self.downloader.busy:
+                self._cancel()
+            if self.updater.busy:
+                self.updater.cancel()
             event.ignore()
         else:
             event.accept()

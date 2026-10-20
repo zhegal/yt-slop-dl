@@ -14,6 +14,9 @@ import app.downloader as module
 FAKE_WORKER = r'''
 import json, pathlib, subprocess, sys, time
 r = json.loads(sys.stdin.readline())
+if r.get('action') == 'check_updates':
+    print(json.dumps({'type':'update_checked','status':'available','version':'2099.01.02'}), flush=True)
+    sys.exit(0)
 if r.get('auth', {}).get('source') == 'file':
     from app.auth import prepare_auth
     try:
@@ -129,6 +132,27 @@ def test_inspection_returns_metadata_without_creating_downloads(qt_app, tmp_path
     assert events[0]['info']['title'] == 'Test preview'
     assert not downloads.exists()
     assert not downloader.busy
+
+
+def test_update_check_is_asynchronous_and_uses_no_download_or_auth(qt_app, tmp_path, fake_worker):
+    downloader = module.Downloader()
+    results, events, ticks = [], [], []
+    downloader.finished.connect(lambda *result: results.append(result))
+    downloader.event.connect(events.append)
+    timer = QTimer()
+    timer.setInterval(1)
+    timer.timeout.connect(lambda: ticks.append(1))
+    timer.start()
+    try:
+        downloader.check_updates(tmp_path / 'tools')
+        pump_until(qt_app, lambda: bool(results))
+        assert results == [('update_checked', '')]
+        assert events == [{'type': 'update_checked', 'status': 'available', 'version': '2099.01.02'}]
+        assert ticks and not downloader.busy
+        assert set(downloader._request) == {'action', 'components'}
+        assert not list(tmp_path.iterdir())
+    finally:
+        timer.stop()
 
 
 @pytest.mark.parametrize('outcome', ['inspect', 'success', 'error', 'cancelled', 'invalid'])
