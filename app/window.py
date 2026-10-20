@@ -4,10 +4,10 @@ import math
 import base64
 from pathlib import Path
 
-from PySide6.QtCore import QLocale, QStandardPaths, Qt, QTimer, QUrl
+from PySide6.QtCore import QFileSystemWatcher, QLocale, QSettings, QStandardPaths, Qt, QTimer, QUrl
 from PySide6.QtGui import QDesktopServices, QFont, QGuiApplication, QIcon, QPalette, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton,
+    QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton,
     QSizePolicy, QVBoxLayout, QWidget,
 )
 
@@ -33,7 +33,9 @@ class Window(QWidget):
     def __init__(self, language: str | None = None):
         super().__init__()
         self.language = language_for(language or QLocale.system().name())
-        self.downloads = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation) or Path.home() / "Downloads")
+        self._settings = QSettings()
+        self._default_downloads = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation) or Path.home() / "Downloads")
+        self.downloads = self._saved_destination()
         self.components = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / "components"
         # Reuse the tools installed before the application was renamed.
         legacy = self.components.parent.parent / "Media Downloader" / "components"
@@ -187,12 +189,21 @@ class Window(QWidget):
         self.open_folder.hide()
         inner.addWidget(self.open_folder, alignment=Qt.AlignmentFlag.AlignLeft)
         layout.addWidget(card)
-        destination = QLabel(self.t("destination", folder=self.downloads))
-        destination.setObjectName("muted")
-        destination.setWordWrap(True)
-        destination.setTextFormat(Qt.TextFormat.PlainText)
-        destination.setToolTip(str(self.downloads))
-        layout.addWidget(destination)
+        folder_row = QHBoxLayout()
+        self.destination = QLabel(self.t("destination", folder=self.downloads))
+        self.destination.setObjectName("muted")
+        self.destination.setWordWrap(True)
+        self.destination.setTextFormat(Qt.TextFormat.PlainText)
+        self.destination.setToolTip(str(self.downloads))
+        self.choose_folder = QPushButton(self.t("choose_folder"))
+        self.choose_folder.setMinimumHeight(36)
+        self.choose_folder.clicked.connect(self._choose_folder)
+        folder_row.addWidget(self.destination, 1)
+        folder_row.addWidget(self.choose_folder)
+        layout.addLayout(folder_row)
+        self.folder_watcher = QFileSystemWatcher(self)
+        self.folder_watcher.directoryChanged.connect(self._check_destination)
+        self._check_destination()
         footer = QLabel(self.t("first_run"))
         footer.setObjectName("muted")
         footer.setWordWrap(True)
@@ -346,6 +357,7 @@ class Window(QWidget):
             container = self.container.currentData()
             if container != "auto" and container not in self._selection["containers"]:
                 return
+            self._check_destination()
             self._formats = []
             self.open_folder.hide()
             self.status.setText(self.t("preparing"))
@@ -367,6 +379,9 @@ class Window(QWidget):
         self.quality.setEnabled(not busy and self._info is not None and (self.video_check.isChecked() or self.audio_check.isChecked()))
         self.video_check.setEnabled(not busy)
         self.audio_check.setEnabled(not busy)
+        self.choose_folder.setEnabled(not busy)
+        if not busy:
+            self._check_destination()
 
     def _cancel(self):
         self.status.setText(self.t("cancelling"))
@@ -428,9 +443,49 @@ class Window(QWidget):
         if self._closing:
             QTimer.singleShot(0, self.close)
 
+    def _saved_destination(self):
+        saved = self._settings.value("download_folder", "", type=str)
+        if saved:
+            try:
+                folder = Path(saved)
+                if folder.is_absolute() and folder.is_dir():
+                    return folder
+            except (OSError, ValueError):
+                pass
+            # Clear the stale preference, so recreating the old path later
+            # does not unexpectedly restore it as the destination.
+            self._settings.remove("download_folder")
+            self._settings.sync()
+        return self._default_downloads
+
+    def _check_destination(self, *_):
+        if self.downloader.busy:
+            return
+        self.downloads = self._saved_destination()
+        self.destination.setText(self.t("destination", folder=self.downloads))
+        self.destination.setToolTip(str(self.downloads))
+        desired = [str(self.downloads)] if self.downloads != self._default_downloads else []
+        current = self.folder_watcher.directories()
+        if current != desired:
+            if current:
+                self.folder_watcher.removePaths(current)
+            if desired:
+                self.folder_watcher.addPaths(desired)
+
+    def _choose_folder(self):
+        if self.downloader.busy:
+            return
+        self._check_destination()
+        folder = QFileDialog.getExistingDirectory(self, self.t("choose_folder"), str(self.downloads))
+        if folder:
+            self._settings.setValue("download_folder", folder)
+            self._settings.sync()
+            self._check_destination()
+
     def _open_folder(self):
-        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.downloads))):
-            self.detail.setText(self.t("open_error", folder=self.downloads))
+        folder = self.result_path.parent if self.result_path else self.downloads
+        if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+            self.detail.setText(self.t("open_error", folder=folder))
 
     def closeEvent(self, event):
         if self.downloader.busy:

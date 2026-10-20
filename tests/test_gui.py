@@ -11,6 +11,15 @@ from app.i18n import translate
 from app.window import Window
 
 
+@pytest.fixture(autouse=True)
+def isolated_settings(tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+    def create():
+        return QSettings(str(tmp_path / 'preferences.ini'), QSettings.Format.IniFormat)
+    monkeypatch.setattr('app.window.QSettings', create)
+    return create
+
+
 @pytest.mark.parametrize("language", ["ru", "uk", "en"])
 def test_window_launch_and_validation(qt_app, language):
     window = Window(language)
@@ -132,4 +141,132 @@ def test_quality_and_video_audio_checkboxes(qt_app, monkeypatch):
     window._busy(True)
     assert not window.video_check.isEnabled() and not window.quality.isEnabled()
     window._busy(False)
+    window.close()
+
+
+def test_choose_destination_cancel_and_open_saved_folder(qt_app, tmp_path, monkeypatch):
+    from app.window import QFileDialog, QDesktopServices
+    from test_media import selectable_info
+
+    window = Window('ru')
+    window.show()
+    default = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation) or Path.home() / 'Downloads')
+    assert window.downloads == default
+    info = selectable_info() | {'url': 'https://www.youtube.com/watch?v=abcdefghijk'}
+    window.url.setText(info['url'])
+    window._show_info(info)
+    window._finished('inspected', '')
+    calls = []
+    monkeypatch.setattr(window.downloader, 'start', lambda *args, **kwargs: calls.append(args))
+    # Cancelling the native picker must keep the destination and the preview.
+    monkeypatch.setattr(QFileDialog, 'getExistingDirectory', lambda *args: '')
+    window.choose_folder.click()
+    assert window.downloads == default and window._info == info and not calls
+    first = tmp_path / 'Мої відео 100%'
+    first.mkdir()
+    dialog_arguments = []
+    def choose(*args):
+        dialog_arguments.append(args)
+        return str(first)
+    monkeypatch.setattr(QFileDialog, 'getExistingDirectory', choose)
+    window.choose_folder.click()
+    assert dialog_arguments[0][2] == str(default)
+    assert str(first) in window.destination.text()
+    window.confirm.click()
+    assert calls[0][1] == first
+    # Both the button and the slot prevent changing an active operation's folder.
+    window.downloader.busy = True
+    window._busy(True)
+    assert not window.choose_folder.isEnabled()
+    window._choose_folder()
+    assert len(dialog_arguments) == 1
+    window.downloader.busy = False
+    window._busy(False)
+    window._finished('success', str(first / 'video.mp4'))
+    second = tmp_path / 'Наступне завантаження'
+    second.mkdir()
+    monkeypatch.setattr(QFileDialog, 'getExistingDirectory', lambda *args: str(second))
+    window.choose_folder.click()
+    assert window.downloads == second
+    opened = []
+    monkeypatch.setattr(QDesktopServices, 'openUrl', lambda url: opened.append(url.toLocalFile()) or True)
+    window.open_folder.click()
+    assert opened == [str(first)]
+    window.close()
+    # A fresh window and a fresh Python process must both restore the selection.
+    fresh = Window('ru')
+    assert fresh.downloads == second
+    result = subprocess.run([sys.executable, '-c',
+        'from PySide6.QtCore import QSettings; import sys; '
+        'print(QSettings(sys.argv[1], QSettings.Format.IniFormat).value("download_folder"))',
+        fresh._settings.fileName()], capture_output=True, text=True, encoding='utf-8',
+        env=os.environ | {'PYTHONIOENCODING': 'utf-8'}, check=True, timeout=10)
+    assert result.stdout.strip() == str(second)
+    fresh.close()
+
+
+@pytest.mark.parametrize('change', ['deleted', 'renamed', 'replaced'])
+def test_missing_saved_folder_falls_back_and_stays_reset(qt_app, tmp_path, isolated_settings, change):
+    saved = tmp_path / 'Saved destination'
+    saved.mkdir()
+    settings = isolated_settings()
+    settings.setValue('download_folder', str(saved))
+    settings.sync()
+    if change == 'renamed':
+        saved.rename(tmp_path / 'Renamed destination')
+    else:
+        saved.rmdir()
+        if change == 'replaced':
+            saved.write_text('This is a file, not a folder.')
+    window = Window('ru')
+    assert window.downloads == window._default_downloads
+    assert not isolated_settings().contains('download_folder')
+    if saved.is_file():
+        saved.unlink()
+    saved.mkdir()
+    fresh = Window('ru')
+    assert fresh.downloads == fresh._default_downloads
+    window.close()
+    fresh.close()
+
+
+def test_renamed_folder_resets_while_app_is_open(qt_app, tmp_path, isolated_settings):
+    import time
+    saved = tmp_path / 'Current destination'
+    saved.mkdir()
+    settings = isolated_settings()
+    settings.setValue('download_folder', str(saved))
+    settings.sync()
+    window = Window('ru')
+    assert window.downloads == saved
+    saved.rename(tmp_path / 'Moved destination')
+    deadline = time.monotonic() + 3
+    while window.downloads == saved and time.monotonic() < deadline:
+        qt_app.processEvents()
+        time.sleep(0.01)
+    assert window.downloads == window._default_downloads
+    assert str(window._default_downloads) in window.destination.text()
+    assert not isolated_settings().contains('download_folder')
+    window.close()
+
+
+def test_deleted_folder_is_not_recreated_when_downloading(qt_app, tmp_path, isolated_settings, monkeypatch):
+    from test_media import selectable_info
+    saved = tmp_path / 'Old destination'
+    saved.mkdir()
+    settings = isolated_settings()
+    settings.setValue('download_folder', str(saved))
+    settings.sync()
+    window = Window('ru')
+    info = selectable_info() | {'url': 'https://www.youtube.com/watch?v=abcdefghijk'}
+    window.url.setText(info['url'])
+    window._show_info(info)
+    calls = []
+    monkeypatch.setattr(window.downloader, 'start', lambda *args, **kwargs: calls.append(args))
+    # No event-loop turn: validation before Download must catch the removal too.
+    saved.rmdir()
+    window._confirm_download()
+    assert calls[0][1] == window._default_downloads
+    assert not saved.exists()
+    assert not isolated_settings().contains('download_folder')
     window.close()
