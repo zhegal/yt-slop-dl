@@ -1,14 +1,51 @@
 """Build a local native desktop bundle on the current OS."""
 
+import argparse
+import json
 import os
 import platform
+import re
 import subprocess
 import sys
 from pathlib import Path
 
 
+# Preserve the identifier used by existing installations and privacy records.
+MACOS_BUNDLE_ID = "YT Slop DL"
+SIGNING_CONFIG = "config.local.signing.json"
+
+
+def signing_identity(root: Path, requested: str | None = None) -> str:
+    """Pin a real Keychain identity; never silently downgrade a signed build."""
+    config = root / SIGNING_CONFIG
+    if not requested and config.exists():
+        try:
+            requested = json.loads(config.read_text(encoding="utf-8"))["identity"]
+            if not isinstance(requested, str) or not requested:
+                raise ValueError()
+        except (ValueError, KeyError, TypeError) as error:
+            raise RuntimeError(f"Invalid {SIGNING_CONFIG}; choose --codesign-identity explicitly.") from error
+    result = subprocess.run(["security", "find-identity", "-v", "-p", "codesigning"],
+                            check=True, capture_output=True, text=True)
+    identities = re.findall(r'^\s*\d+\) ([0-9A-Fa-f]{40}) "([^"]+)"', result.stdout, re.MULTILINE)
+    matches = [digest for digest, name in identities
+               if not requested or requested.upper() == digest.upper() or requested == name]
+    if len(matches) != 1:
+        raise RuntimeError("The selected signing identity is unavailable or ambiguous. "
+                           "Use --codesign-identity with a valid Keychain certificate SHA-1. "
+                           "--ad-hoc is only for disposable builds; privacy permissions will not survive updates.")
+    return matches[0].upper()
+
+
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    signing = parser.add_mutually_exclusive_group()
+    signing.add_argument("--codesign-identity", help="macOS Keychain certificate name/SHA-1; remembered locally")
+    signing.add_argument("--ad-hoc", action="store_true", help="Disposable macOS build without persistent privacy identity")
+    args = parser.parse_args()
     root = Path(__file__).resolve().parent
+    system = platform.system()
+    identity = signing_identity(root, args.codesign_identity) if system == "Darwin" and not args.ad_hoc else None
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import Qt
     from PySide6.QtGui import QImage, QPainter
@@ -32,7 +69,6 @@ def main():
         if not image.save(str(target), format):
             raise RuntimeError(f"Cannot create icon: {target}")
 
-    system = platform.system()
     if system == "Darwin":
         iconset = assets / "YTSlopDL-Lemon-FullBleed.iconset"
         iconset.mkdir(exist_ok=True)
@@ -47,12 +83,26 @@ def main():
     else:
         icon = assets / "YTSlopDL-Lemon-FullBleed.png"
         render(256, icon)
+    signing_args = []
+    if system == "Darwin":
+        signing_args = ["--osx-bundle-identifier", MACOS_BUNDLE_ID]
+        if identity:
+            signing_args += ["--codesign-identity", identity]
+        else:
+            print("Warning: ad-hoc build; macOS privacy permissions may reset after rebuilding.", flush=True)
     subprocess.run([
         sys.executable, "-m", "PyInstaller", "--clean", "--noconfirm", "--onedir", "--windowed",
         "--name", "YT Slop DL", "--paths", str(root),
         "--icon", str(icon), "--add-data", f"{root / 'app' / 'assets'}{os.pathsep}app/assets",
-        str(root / "app" / "main.py"),
+        *signing_args, str(root / "app" / "main.py"),
     ], cwd=root, check=True)
+    if system == "Darwin":
+        subprocess.run(["codesign", "--verify", "--deep", "--strict", str(root / "dist" / "YT Slop DL.app")], check=True)
+        if identity:
+            config = root / SIGNING_CONFIG
+            temporary = config.with_suffix(".tmp")
+            temporary.write_text(json.dumps({"identity": identity}) + "\n", encoding="utf-8")
+            temporary.replace(config)
     if system == "Linux":
         desktop = root / "dist" / "YT Slop DL.desktop"
         desktop.write_text(

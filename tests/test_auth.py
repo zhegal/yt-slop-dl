@@ -8,12 +8,110 @@ from pathlib import Path
 
 import pytest
 
-from app.auth import auth_arguments, normalize_auth, prepare_auth
+from app.auth import auth_arguments, normalize_auth, prepare_auth, reimport_needed, saved_session, store_session
 from app.downloader import build_arguments, build_inspection_arguments
 
 
 COOKIE_DATA = b'# Netscape HTTP Cookie File\n#HttpOnly_.youtube.com\tTRUE\t/\tTRUE\t2000000000\tTEST_SESSION\tFAKE_SESSION_VALUE\n'
 URL = 'https://www.youtube.com/watch?v=abcdefghijk'
+SESSION = COOKIE_DATA.replace(b'TEST_SESSION', b'SID')
+
+
+def test_import_is_scoped_private_persistent_and_independent_of_source(tmp_path):
+    original = tmp_path / 'browser-export.txt'
+    original.write_bytes(SESSION + b'.example.org\tTRUE\t/\tTRUE\t2000000000\tSECRET\tUNRELATED\n')
+    folder = tmp_path / 'authorization'
+    store_session(original, folder)
+    original.unlink()
+    session = saved_session(folder)
+    data = Path(session['path']).read_bytes()
+    assert b'FAKE_SESSION_VALUE' in data
+    assert b'UNRELATED' not in data and b'example.org' not in data
+    assert len(list(folder.iterdir())) == 1
+    if os.name != 'nt':
+        assert stat.S_IMODE(folder.stat().st_mode) == 0o700
+        assert stat.S_IMODE(Path(session['path']).stat().st_mode) == 0o600
+    assert auth_arguments(session) == ['--cookies', str(folder / 'cookies.txt')]
+
+
+@pytest.mark.parametrize('data,key', [
+    (COOKIE_DATA, 'auth_no_session'),
+    (SESSION.replace(b'2000000000', b'1'), 'auth_session_expired'),
+    (b'broken FAKE_SESSION_VALUE', 'auth_file_invalid'),
+    (SESSION.replace(b'.youtube.com', b'.youtube.com.evil.test'), 'auth_file_invalid'),
+])
+def test_failed_reimport_preserves_existing_session(tmp_path, data, key, capsys):
+    original = tmp_path / 'export.txt'
+    original.write_bytes(SESSION)
+    folder = tmp_path / 'authorization'
+    store_session(original, folder)
+    previous = (folder / 'cookies.txt').read_bytes()
+    original.write_bytes(data)
+    with pytest.raises(ValueError, match=f'^{key}$'):
+        store_session(original, folder)
+    assert (folder / 'cookies.txt').read_bytes() == previous
+    assert len(list(folder.iterdir())) == 1
+    assert 'FAKE_SESSION_VALUE' not in capsys.readouterr().err
+
+
+def test_missing_and_expired_saved_session_require_manual_import(tmp_path):
+    with pytest.raises(ValueError, match='auth_import_required'):
+        saved_session(tmp_path)
+    path = tmp_path / 'cookies.txt'
+    path.write_bytes(SESSION.replace(b'2000000000', b'1'))
+    with pytest.raises(ValueError, match='auth_session_expired'):
+        saved_session(tmp_path)
+
+
+def test_session_cookies_without_expiry_are_preserved(tmp_path):
+    path = tmp_path / 'export.txt'
+    path.write_bytes(SESSION.replace(b'2000000000', b'0'))
+    store_session(path, tmp_path / 'authorization')
+    assert saved_session(tmp_path / 'authorization')['source'] == 'file'
+
+
+@pytest.mark.parametrize('message,expected', [
+    ('The provided YouTube account cookies are no longer valid', True),
+    ('Sign in to confirm you’re not a bot', True),
+    ('Session expired', True),
+    ('HTTP Error 403: Forbidden', False),
+    ('Network is unreachable', False),
+    ('This video is only available to members of this channel', False),
+])
+def test_reimport_prompt_does_not_misclassify_network_or_membership(message, expected):
+    assert reimport_needed(message) == expected
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_browser_import_uses_offline_manifest_and_never_exposes_upstream_secrets(tmp_path, monkeypatch, fails):
+    from app import worker
+    from types import SimpleNamespace
+    tools = {name: tmp_path / name for name in ('yt-dlp', 'ffmpeg', 'deno')}
+    monkeypatch.setattr(worker, 'ensure_dependencies', lambda *_: tools)
+    monkeypatch.setattr(worker, 'apply_update', lambda *_: None)
+    events = []
+    monkeypatch.setattr(worker, 'emit', events.append)
+    def run(args, **kwargs):
+        assert args[args.index('--cookies-from-browser') + 1] == 'chrome:Default'
+        assert not kwargs.get('shell')
+        manifest = json.loads(Path(args[args.index('--load-info-json') + 1]).read_text())
+        assert manifest['url'] == 'https://example.invalid/session-import.mp4'
+        assert '--simulate' in args and '--skip-download' in args
+        Path(args[args.index('--cookies') + 1]).write_bytes(SESSION)
+        return SimpleNamespace(returncode=int(fails), stderr=b'FAKE_SESSION_VALUE')
+    monkeypatch.setattr(worker.subprocess, 'run', run)
+    request = {'auth': {'source': 'browser', 'browser': 'chrome', 'profile': 'Default'},
+               'components': str(tmp_path), 'session_folder': str(tmp_path / 'saved'),
+               'auth_folder': str(tmp_path / 'work')}
+    if fails:
+        with pytest.raises(ValueError, match='^auth_import_failed$'):
+            worker.run_auth_import(request)
+        assert not (tmp_path / 'saved/cookies.txt').exists()
+    else:
+        assert worker.run_auth_import(request) == 0
+        assert saved_session(tmp_path / 'saved')['source'] == 'file'
+        assert events[-1] == {'type': 'auth_imported'}
+    assert not list((tmp_path / 'work').iterdir())
 
 
 @pytest.mark.parametrize('auth,expected', [

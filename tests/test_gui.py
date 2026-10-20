@@ -18,7 +18,86 @@ def isolated_settings(tmp_path, monkeypatch):
         return QSettings(str(tmp_path / 'preferences.ini'), QSettings.Format.IniFormat)
     monkeypatch.setattr('app.window.QSettings', create)
     monkeypatch.setattr('app.window.Downloader.check_updates', lambda *_: None)
+    original = QStandardPaths.writableLocation
+    monkeypatch.setattr(QStandardPaths, 'writableLocation', lambda location:
+                        str(tmp_path / 'app-data') if location == QStandardPaths.StandardLocation.AppLocalDataLocation
+                        else original(location))
     return create
+
+
+@pytest.fixture
+def fake_session_import(monkeypatch):
+    def imported(self, auth, folder, components):
+        folder.mkdir(parents=True, exist_ok=True)
+        (folder / 'cookies.txt').write_text('# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t2000000000\tSID\tFAKE_SESSION\n')
+        self.finished.emit('auth_imported', '')
+    monkeypatch.setattr('app.auth_dialog.Downloader.import_auth', imported)
+
+
+def test_legacy_browser_selection_requires_explicit_import(qt_app, isolated_settings, monkeypatch):
+    import json
+    preferences = isolated_settings()
+    preferences.setValue('authentication', json.dumps({'source': 'browser', 'browser': 'chrome'}))
+    window = Window('en')
+    calls = []
+    monkeypatch.setattr(window.downloader, 'start', lambda *a, **kw: calls.append(kw))
+    window.url.setText('https://youtu.be/abcdefghijk')
+    window._start()
+    assert not calls
+    assert 'import' in window.detail.text().lower()
+    assert 'Import needed' in window.authentication.text()
+    window._finished('error', 'The provided YouTube account cookies are no longer valid')
+    assert translate('en', 'auth_reimport_required') in window.detail.text()
+    window._finished('error', 'HTTP Error 403: Forbidden')
+    assert translate('en', 'auth_reimport_required') not in window.detail.text()
+    fresh = Window('en')
+    assert fresh._auth_needs_import
+    assert fresh.auth_notice.text() == translate('en', 'auth_reimport_required')
+    fresh.close()
+    window.close()
+
+
+def test_import_failure_leaves_existing_session_and_dialog_editable(qt_app, tmp_path, monkeypatch):
+    from app.auth_dialog import AuthDialog
+    window = Window('en')
+    window.session_folder.mkdir(parents=True)
+    cookie = window.session_folder / 'cookies.txt'
+    cookie.write_bytes(b'previous session')
+    previous = {'source': 'browser', 'browser': 'chrome', 'profile': 'Default'}
+    dialog = AuthDialog('en', previous, window)
+    monkeypatch.setattr(dialog.downloader, 'import_auth', lambda *_: dialog.downloader.finished.emit('error', 'auth_import_failed'))
+    dialog.browser.setCurrentIndex(dialog.browser.findData('firefox'))
+    dialog._apply()
+    assert dialog.auth == previous and dialog.result() == 0
+    assert cookie.read_bytes() == b'previous session'
+    assert dialog.apply_button.isEnabled() and dialog.source.isEnabled()
+    assert dialog.error.text() == translate('en', 'auth_import_failed')
+    dialog.reject()
+    window.close()
+
+
+def test_cookie_file_import_runs_in_real_worker_without_network(qt_app, tmp_path):
+    from PySide6.QtCore import QEventLoop, QTimer
+    from app.auth import saved_session
+    from app.downloader import Downloader
+    original = tmp_path / 'source.txt'
+    data = b'# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t2000000000\tSID\tFAKE_SESSION\n'
+    original.write_bytes(data)
+    downloader = Downloader()
+    outcomes = []
+    loop = QEventLoop()
+    downloader.finished.connect(lambda *result: (outcomes.append(result), loop.quit()))
+    timer = QTimer()
+    timer.setSingleShot(True)
+    timer.timeout.connect(downloader.cancel)
+    timer.start(10000)
+    downloader.import_auth({'source': 'file', 'path': str(original)}, tmp_path / 'saved', tmp_path / 'components')
+    loop.exec()
+    timer.stop()
+    assert outcomes == [('auth_imported', '')]
+    assert downloader._auth_folder is None
+    assert original.read_bytes() == data
+    assert saved_session(tmp_path / 'saved')['source'] == 'file'
 
 
 @pytest.mark.parametrize("language", ["ru", "uk", "en"])
@@ -274,7 +353,7 @@ def test_deleted_folder_is_not_recreated_when_downloading(qt_app, tmp_path, isol
 
 
 @pytest.mark.parametrize('language', ['ru', 'uk', 'en'])
-def test_auth_dialog_sources_validation_and_cancel(qt_app, tmp_path, monkeypatch, language):
+def test_auth_dialog_sources_validation_and_cancel(qt_app, tmp_path, monkeypatch, language, fake_session_import):
     from app.auth_dialog import AuthDialog, QFileDialog
     dialog = AuthDialog(language, {})
     dialog.show()
@@ -300,7 +379,7 @@ def test_auth_dialog_sources_validation_and_cancel(qt_app, tmp_path, monkeypatch
     dialog.close()
 
 
-def test_auth_selection_persists_invalidation_and_dispatch(qt_app, monkeypatch, isolated_settings):
+def test_auth_selection_persists_invalidation_and_dispatch(qt_app, monkeypatch, isolated_settings, fake_session_import):
     from PySide6.QtCore import QTimer
     from PySide6.QtWidgets import QApplication
     from test_media import selectable_info
@@ -318,7 +397,7 @@ def test_auth_selection_persists_invalidation_and_dispatch(qt_app, monkeypatch, 
     QTimer.singleShot(0, choose)
     window.authentication.click()
     assert window._info is None and not window.preview.isVisible()
-    assert 'Firefox' in window.authentication.text()
+    assert 'Saved session' in window.authentication.text()
     assert 'Test profile' in isolated_settings().value('authentication')
     fresh = Window('en')
     assert fresh._auth == window._auth
@@ -326,10 +405,11 @@ def test_auth_selection_persists_invalidation_and_dispatch(qt_app, monkeypatch, 
     calls = []
     monkeypatch.setattr(window.downloader, 'start', lambda *args, **kw: calls.append(kw))
     window.download.click()
-    assert calls[-1]['action'] == 'inspect' and calls[-1]['auth'] == window._auth
+    assert calls[-1]['action'] == 'inspect' and calls[-1]['auth']['source'] == 'file'
+    assert calls[-1]['auth']['path'] == str(window.session_folder / 'cookies.txt')
     window._show_info(info)
     window.confirm.click()
-    assert calls[-1]['auth'] == window._auth and 'action' not in calls[-1]
+    assert calls[-1]['auth']['source'] == 'file' and 'action' not in calls[-1]
     window._busy(True)
     assert not window.authentication.isEnabled()
     window._busy(False)

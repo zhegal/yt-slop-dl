@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.downloader import Downloader, validate_url
-from app.auth import AUTH_ERRORS, normalize_auth
+from app.auth import AUTH_ERRORS, normalize_auth, reimport_needed, saved_session
 from app.auth_dialog import AuthDialog
 from app.i18n import LANGUAGES, language_for, translate
 from app.media import format_duration, select_streams
@@ -42,6 +42,7 @@ class Window(QWidget):
         self._detail_text = ("hint", {})
         self._progress_detail = None
         self._last_error = ""
+        self._auth_needs_import = self._settings.value("session_reimport_required", False, type=bool)
         try:
             self._auth = normalize_auth(json.loads(self._settings.value("authentication", "{}", type=str)))
         except (ValueError, TypeError):
@@ -50,6 +51,7 @@ class Window(QWidget):
         self._default_downloads = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation) or Path.home() / "Downloads")
         self.downloads = self._saved_destination()
         self.components = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / "components"
+        self.session_folder = self.components.parent / "authorization"
         # Reuse the tools installed before the application was renamed.
         legacy = self.components.parent.parent / "Media Downloader" / "components"
         if not self.components.exists() and legacy.exists():
@@ -108,6 +110,9 @@ class Window(QWidget):
         row.addWidget(self.download)
         layout.addLayout(row)
         self.authentication = QPushButton()
+        self.auth_notice = QLabel()
+        self.auth_notice.setWordWrap(True)
+        self.auth_notice.setTextFormat(Qt.TextFormat.PlainText)
         self.authentication.setMinimumHeight(32)
         self.authentication.clicked.connect(self._configure_auth)
         self._update_auth_button()
@@ -128,6 +133,7 @@ class Window(QWidget):
         options_row.addWidget(self.language_label)
         options_row.addWidget(self.language_combo)
         layout.addLayout(options_row)
+        layout.addWidget(self.auth_notice)
 
         self.preview = QFrame()
         self.preview.setObjectName("preview")
@@ -277,6 +283,7 @@ class Window(QWidget):
         self._detail_text = (key, values if key else {"text": text})
         self._progress_detail = None
         self.detail.setText(self.t(key, **values) if key else text)
+        self.detail.setToolTip("")
 
     def _change_language(self, *_):
         language = self.language_combo.currentData()
@@ -368,7 +375,7 @@ class Window(QWidget):
         self._set_detail("first_run")
         self.progress.setRange(0, 0)
         try:
-            self.downloader.start(url, self.downloads, self.components, action="inspect", auth=self._auth)
+            self.downloader.start(url, self.downloads, self.components, action="inspect", auth=self._download_auth())
         except (OSError, ValueError) as error:
             self._finished("error", str(error))
 
@@ -487,7 +494,7 @@ class Window(QWidget):
             self.progress.setRange(0, 0)
             self.downloader.start(self._info["url"], self.downloads, self.components,
                                   container=container, format_id=self._selection["format_id"],
-                                  video=self.video_check.isChecked(), audio=self.audio_check.isChecked(), auth=self._auth)
+                                  video=self.video_check.isChecked(), audio=self.audio_check.isChecked(), auth=self._download_auth())
         except (OSError, ValueError) as error:
             self._finished("error", str(error))
 
@@ -518,6 +525,8 @@ class Window(QWidget):
         kind = event.get("type")
         if kind == "update":
             self._update_event(event)
+        elif kind == "auth_reimport_required" and self._auth:
+            self._require_import()
         elif kind == "metadata":
             self._show_info(event["info"])
         elif kind == "dependency":
@@ -578,13 +587,17 @@ class Window(QWidget):
 
     def _show_error(self, message, *, auth_hint=True):
         # Keep upstream diagnostics; translate only the application's own messages.
+        if self._auth and (message == "auth_session_expired" or reimport_needed(message)):
+            self._require_import()
         if message in AUTH_ERRORS:
             self._set_detail(message)
             message = self.detail.text()
         elif not message:
             self._set_detail("retry")
         else:
-            if auth_hint and self._auth:
+            if auth_hint and self._auth and reimport_needed(message):
+                message += "\n\n" + self.t("auth_reimport_required")
+            elif auth_hint and self._auth:
                 message += "\n\n" + self.t("auth_error_hint")
             self._set_detail(text=message[:1000])
         self.detail.setToolTip(message)
@@ -595,7 +608,23 @@ class Window(QWidget):
             source = self._auth["browser"].capitalize()
         elif self._auth.get("source") == "file":
             source = self.t("auth_file")
+        missing = self._auth and not (self.session_folder / "cookies.txt").is_file()
+        if self._auth:
+            source = self.t("auth_import_short") if missing or self._auth_needs_import else self.t("auth_saved_short")
         self.authentication.setText(self.t("auth_button", source=source))
+        self.auth_notice.setText(self.t("auth_reimport_required" if self._auth_needs_import else "auth_import_required"))
+        self.auth_notice.setVisible(bool(self._auth and (missing or self._auth_needs_import)))
+
+    def _require_import(self):
+        self._auth_needs_import = True
+        self._settings.setValue("session_reimport_required", True)
+        self._settings.sync()
+        self._update_auth_button()
+
+    def _download_auth(self):
+        if self._auth and self._auth_needs_import:
+            raise ValueError("auth_reimport_required")
+        return saved_session(self.session_folder) if self._auth else {}
 
     def _check_updates(self):
         if self._closing or not self.isVisible():
@@ -633,8 +662,10 @@ class Window(QWidget):
         if self.downloader.busy:
             return
         dialog = AuthDialog(self.language, self._auth, self)
-        if dialog.exec() == AuthDialog.DialogCode.Accepted and dialog.auth != self._auth:
+        if dialog.exec() == AuthDialog.DialogCode.Accepted:
             self._auth = dialog.auth
+            self._auth_needs_import = False
+            self._settings.remove("session_reimport_required")
             if self._auth:
                 self._settings.setValue("authentication", json.dumps(self._auth, ensure_ascii=False))
             else:

@@ -49,7 +49,7 @@ def validate_url(value: str) -> str:
 def build_inspection_arguments(url: str, tools: dict[str, Path], *, auth=None) -> list[str]:
     return [
         "--ignore-config", "--no-plugin-dirs", "--no-remote-components", "--no-playlist",
-        "--skip-download", "--simulate", "--dump-single-json", "--no-warnings", "--no-colors",
+        "--skip-download", "--simulate", "--dump-single-json", "--no-colors",
         "--encoding", "utf-8", "--socket-timeout", "20", "--retries", "2",
         "--format", "bestvideo+bestaudio/best", "--merge-output-format", "mp4/mkv",
         "--ffmpeg-location", str(tools["ffmpeg"].parent),
@@ -183,6 +183,15 @@ class Downloader(QObject):
         self._request = {"action": "check_updates", "components": str(components)}
         self._launch()
 
+    def import_auth(self, auth: dict, session_folder: Path, components: Path):
+        if self.busy:
+            return
+        auth = normalize_auth(auth)
+        self._auth_folder = Path(tempfile.mkdtemp(prefix="yt-slop-dl-auth-"))
+        self._request = {"action": "import_auth", "auth": auth, "auth_folder": str(self._auth_folder),
+                         "session_folder": str(session_folder), "components": str(components)}
+        self._launch()
+
     def _launch(self):
         self._cancelled = False
         self._buffer = b""
@@ -239,6 +248,8 @@ class Downloader(QObject):
             elif kind == "update_checked":
                 self._result = ("update_checked", "")
                 self.event.emit(event)
+            elif kind == "auth_imported":
+                self._result = ("auth_imported", "")
             elif kind == "error":
                 self._result = ("error", event.get("message", "Unknown error"))
             else:
@@ -318,7 +329,7 @@ class Downloader(QObject):
         result = self._result or ("error", "Worker finished without a result.")
         # A file already published successfully must remain visible even if cancel
         # was clicked as the worker was exiting.
-        if self._cancelled and result[0] != "success":
+        if self._cancelled and result[0] not in {"success", "auth_imported"}:
             result = ("cancelled", "")
         self.busy_changed.emit(False)
         self.finished.emit(*result)

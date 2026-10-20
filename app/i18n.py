@@ -11,6 +11,19 @@ TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then 
         'update_failed': 'Could not update yt-dlp. Continuing with the installed version; retrying after 24 hours.',
         'update_restored': 'The previous verified yt-dlp version has been restored.',
         'update_check_failed': 'Could not check for yt-dlp updates. The installed version remains available.',
+        'auth_import': 'Import session',
+        'auth_reimport': 'Import again',
+        'auth_disable': 'Disable and delete session',
+        'auth_saved': 'A YouTube session is saved locally. The browser is read only when you import again.',
+        'auth_saved_short': 'Saved session',
+        'auth_import_short': 'Import needed',
+        'auth_importing': 'Importing YouTube session…',
+        'auth_import_required': 'Open Authorization and import a YouTube session before continuing.',
+        'auth_session_expired': 'The saved YouTube session has expired. Sign in in your browser and import it again.',
+        'auth_no_session': 'No signed-in YouTube session found. Sign in to YouTube in this browser/profile and import again.',
+        'auth_import_failed': 'Could not import the browser session. Check the browser/profile and OS permissions, or import a fresh Netscape cookies.txt file. The previous saved session is unchanged.',
+        'auth_storage_failed': 'Could not save the session privately. Check access to the application data folder.',
+        'auth_reimport_required': 'YouTube did not accept the saved sign-in. Open Authorization and import again from a browser where this video plays. Access may also depend on your account.',
         'auth_title': 'YouTube authorization',
         'auth_button': 'Authorization: {source}…',
         'auth_source': 'Cookie source',
@@ -21,13 +34,8 @@ TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then 
         'auth_profile_hint': 'Optional: profile name or folder path',
         'auth_browse': 'Choose…',
         'auth_apply': 'Apply',
-        'auth_hint': 'Sign in to YouTube in the selected browser, or choose a Netscape cookies.txt export '
-                     'containing YouTube cookies. Access depends on your account and yt-dlp support; '
-                     'DRM-protected media is unsupported. Only the source selection is saved. '
-                     'Cookies grant account access: keep exported files private.',
-        'auth_error_hint': 'Check that this account can play the video and its cookies have not expired. '
-                           'If browser extraction fails, close the browser, check OS access permissions '
-                           'or use a Netscape cookies.txt export.',
+        'auth_hint': 'Import once from a signed-in browser or a Netscape cookies.txt file. Only YouTube cookies are saved in the app data folder, then reused for analysis and downloads. Browser access is needed only during import. Cookies are account credentials; the saved file is private but not encrypted. DRM is unsupported.',
+        'auth_error_hint': 'Check account access and yt-dlp support. If YouTube asks you to sign in, open Authorization and import the session again.',
         'auth_invalid': 'Choose a valid cookie source and browser profile (without control characters or ::).',
         'auth_file_unreadable': 'Cannot read the selected cookies file. Choose an existing readable file.',
         'auth_file_invalid': 'Choose a valid Netscape cookies.txt export containing YouTube cookies (up to 10 MB).',
@@ -89,6 +97,19 @@ TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then 
         'update_failed': 'Не удалось обновить yt-dlp. Используется установленная версия; повторная попытка через 24 часа.',
         'update_restored': 'Восстановлена предыдущая проверенная версия yt-dlp.',
         'update_check_failed': 'Не удалось проверить обновления yt-dlp. Установленная версия остаётся доступной.',
+        'auth_import': 'Импортировать сессию',
+        'auth_reimport': 'Импортировать заново',
+        'auth_disable': 'Отключить и удалить сессию',
+        'auth_saved': 'Сессия YouTube сохранена локально. Браузер читается только при повторном импорте.',
+        'auth_saved_short': 'Сохранённая сессия',
+        'auth_import_short': 'Нужен импорт',
+        'auth_importing': 'Импорт сессии YouTube…',
+        'auth_import_required': 'Откройте «Авторизация» и импортируйте сессию YouTube перед продолжением.',
+        'auth_session_expired': 'Сохранённая сессия YouTube истекла. Войдите в браузере и импортируйте её заново.',
+        'auth_no_session': 'Сессия входа YouTube не найдена. Войдите в YouTube в этом браузере/профиле и повторите импорт.',
+        'auth_import_failed': 'Не удалось импортировать сессию. Проверьте браузер, профиль и разрешения ОС или импортируйте свежий файл cookies.txt в формате Netscape. Прежняя сессия сохранена.',
+        'auth_storage_failed': 'Не удалось сохранить сессию с ограниченным доступом. Проверьте доступ к папке данных приложения.',
+        'auth_reimport_required': 'YouTube не принял сохранённый вход. Откройте «Авторизация» и повторите импорт из браузера, где воспроизводится это видео. Доступ также зависит от прав аккаунта.',
         'auth_title': 'Авторизация YouTube',
         'auth_button': 'Авторизация: {source}…',
         'auth_source': 'Источник cookies',
@@ -99,13 +120,8 @@ TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then 
         'auth_profile_hint': 'Необязательно: имя профиля или путь к его папке',
         'auth_browse': 'Выбрать…',
         'auth_apply': 'Применить',
-        'auth_hint': 'Войдите в YouTube в выбранном браузере или укажите экспорт cookies.txt в формате Netscape '
-                     'с cookies YouTube. Доступ зависит от прав аккаунта и поддержки yt-dlp; видео с DRM '
-                     'не поддерживаются. Сохраняется только выбор источника. Cookies дают доступ к аккаунту: '
-                     'храните экспортированный файл в тайне.',
-        'auth_error_hint': 'Проверьте, что аккаунт может воспроизвести видео и cookies не истекли. '
-                           'Если чтение из браузера не удалось, закройте браузер, проверьте разрешения ОС '
-                           'или используйте экспорт cookies.txt в формате Netscape.',
+        'auth_hint': 'Один раз импортируйте сессию из браузера с выполненным входом или файла cookies.txt в формате Netscape. В папке данных приложения сохраняются только cookies YouTube — для анализа и скачивания. Доступ к браузеру нужен только при импорте. Cookies дают доступ к аккаунту; файл ограничен правами доступа, но не зашифрован. DRM не поддерживается.',
+        'auth_error_hint': 'Проверьте права аккаунта и поддержку yt-dlp. Если YouTube требует вход, откройте «Авторизация» и импортируйте сессию заново.',
         'auth_invalid': 'Выберите корректный источник cookies и профиль браузера (без управляющих символов и ::).',
         'auth_file_unreadable': 'Не удалось прочитать файл cookies. Выберите существующий доступный файл.',
         'auth_file_invalid': 'Выберите корректный экспорт cookies.txt в формате Netscape с cookies YouTube (до 10 МБ).',
@@ -167,6 +183,19 @@ TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then 
         'update_failed': 'Не вдалося оновити yt-dlp. Використовується встановлена версія; повторна спроба через 24 години.',
         'update_restored': 'Відновлено попередню перевірену версію yt-dlp.',
         'update_check_failed': 'Не вдалося перевірити оновлення yt-dlp. Встановлена версія залишається доступною.',
+        'auth_import': 'Імпортувати сесію',
+        'auth_reimport': 'Імпортувати знову',
+        'auth_disable': 'Вимкнути й видалити сесію',
+        'auth_saved': 'Сесію YouTube збережено локально. Браузер читається лише під час повторного імпорту.',
+        'auth_saved_short': 'Збережена сесія',
+        'auth_import_short': 'Потрібен імпорт',
+        'auth_importing': 'Імпорт сесії YouTube…',
+        'auth_import_required': 'Відкрийте «Авторизація» та імпортуйте сесію YouTube перед продовженням.',
+        'auth_session_expired': 'Збережена сесія YouTube прострочена. Увійдіть у браузері та імпортуйте її знову.',
+        'auth_no_session': 'Сесію входу YouTube не знайдено. Увійдіть у YouTube в цьому браузері/профілі та повторіть імпорт.',
+        'auth_import_failed': 'Не вдалося імпортувати сесію. Перевірте браузер, профіль і дозволи ОС або імпортуйте свіжий файл cookies.txt у форматі Netscape. Попередню сесію збережено.',
+        'auth_storage_failed': 'Не вдалося приватно зберегти сесію. Перевірте доступ до папки даних застосунку.',
+        'auth_reimport_required': 'YouTube не прийняв збережений вхід. Відкрийте «Авторизація» та повторіть імпорт із браузера, де відтворюється це відео. Доступ також залежить від прав облікового запису.',
         'auth_title': 'Авторизація YouTube',
         'auth_button': 'Авторизація: {source}…',
         'auth_source': 'Джерело cookies',
@@ -177,13 +206,8 @@ TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then 
         'auth_profile_hint': 'Необов’язково: назва профілю або шлях до його папки',
         'auth_browse': 'Вибрати…',
         'auth_apply': 'Застосувати',
-        'auth_hint': 'Увійдіть у YouTube у вибраному браузері або вкажіть експорт cookies.txt у форматі Netscape '
-                     'з cookies YouTube. Доступ залежить від прав облікового запису та підтримки yt-dlp; '
-                     'відео з DRM не підтримуються. Зберігається лише вибір джерела. Cookies дають доступ '
-                     'до облікового запису: зберігайте експортований файл у таємниці.',
-        'auth_error_hint': 'Перевірте, що обліковий запис може відтворити відео й cookies не прострочені. '
-                           'Якщо читання з браузера не вдалося, закрийте браузер, перевірте дозволи ОС '
-                           'або скористайтеся експортом cookies.txt у форматі Netscape.',
+        'auth_hint': 'Один раз імпортуйте сесію з браузера з виконаним входом або файлу cookies.txt у форматі Netscape. У папці даних застосунку зберігаються лише cookies YouTube — для аналізу та завантаження. Доступ до браузера потрібен лише під час імпорту. Cookies надають доступ до облікового запису; файл обмежений правами доступу, але не зашифрований. DRM не підтримується.',
+        'auth_error_hint': 'Перевірте права облікового запису та підтримку yt-dlp. Якщо YouTube вимагає входу, відкрийте «Авторизація» й імпортуйте сесію знову.',
         'auth_invalid': 'Виберіть коректне джерело cookies і профіль браузера (без керівних символів та ::).',
         'auth_file_unreadable': 'Не вдалося прочитати файл cookies. Виберіть наявний доступний файл.',
         'auth_file_invalid': 'Виберіть коректний експорт cookies.txt у форматі Netscape з cookies YouTube (до 10 МБ).',

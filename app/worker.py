@@ -7,12 +7,13 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 from collections import deque
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
-from app.auth import prepare_auth
+from app.auth import auth_arguments, normalize_auth, prepare_auth, private_directory, reimport_needed, store_session
 from app.dependencies import DependencyError, ensure_dependencies
 from app.downloader import build_arguments, build_inspection_arguments, error_message, parse_output, validate_url
 from app.media import summarize_info
@@ -21,6 +22,49 @@ from app.updates import apply_update, check_for_updates, operation_lock
 
 class Cancelled(BaseException):
     pass
+
+
+def run_auth_import(request: dict) -> int:
+    auth = normalize_auth(request.get("auth"))
+    if not auth:
+        raise ValueError("auth_invalid")
+    folder = Path(request["session_folder"])
+    workspace = Path(request["auth_folder"])
+    private_directory(folder)
+    private_directory(workspace)
+    if auth["source"] == "file":
+        store_session(Path(auth["path"]), folder, workspace)
+    else:
+        components = Path(request["components"])
+        tools = ensure_dependencies(components, emit)
+        apply_update(components, tools, emit, tool_environment(components))
+        # A simulated local manifest makes yt-dlp open/save its cookie jar without
+        # contacting a site or depending on any particular public video.
+        with tempfile.TemporaryDirectory(prefix=".import-", dir=workspace) as temporary:
+            temporary = Path(temporary)
+            manifest = temporary / "empty.json"
+            manifest.write_text(json.dumps({"id": "session-import", "title": "Session import",
+                                            "url": "https://example.invalid/session-import.mp4",
+                                            "ext": "mp4", "vcodec": "avc1", "acodec": "mp4a", "duration": 1}), encoding="utf-8")
+            export = temporary / "browser.txt"
+            export.touch(mode=0o600)
+            export.write_text("# Netscape HTTP Cookie File\n", encoding="utf-8")
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            try:
+                result = subprocess.run([str(tools["yt-dlp"]), "--ignore-config", "--no-plugin-dirs",
+                                         "--no-remote-components", "--quiet", "--no-warnings", "--no-colors",
+                                         "--simulate", "--skip-download", *auth_arguments(auth),
+                                         "--cookies", str(export), "--load-info-json", str(manifest)],
+                                        capture_output=True, timeout=90, env=tool_environment(components),
+                                        creationflags=flags)
+            except subprocess.TimeoutExpired:
+                raise ValueError("auth_import_failed") from None
+            if result.returncode:
+                # Upstream errors may contain cookie rows; never expose them.
+                raise ValueError("auth_import_failed")
+            store_session(export, folder, workspace)
+    emit({"type": "auth_imported"})
+    return 0
 
 
 def emit(event: dict):
@@ -122,6 +166,8 @@ def run_download(request: dict) -> int:
                 result = Path(event["path"]).resolve()
             elif event["type"] == "log":
                 lines.append(event["text"])
+                if request.get("auth") and reimport_needed(event["text"]):
+                    emit({"type": "auth_reimport_required"})
                 # No unbounded log stream in the GUI, but warnings may help the user.
             else:
                 emit(event)
@@ -183,6 +229,8 @@ def run_inspection(request: dict) -> int:
                 info = json.loads(raw)
             else:
                 lines.append(raw.strip())
+                if request.get("auth") and reimport_needed(raw):
+                    emit({"type": "auth_reimport_required"})
         code = process.wait()
     if code:
         raise RuntimeError(error_message(list(lines), code))
@@ -210,6 +258,8 @@ def main() -> int:
             emit({"type": "update_checked", **check_for_updates(Path(request["components"]))})
             return 0
         with operation_lock(Path(request["components"])):
+            if request.get("action") == "import_auth":
+                return run_auth_import(request)
             return run_inspection(request) if request.get("action") == "inspect" else run_download(request)
     except Cancelled:
         return 130
