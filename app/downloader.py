@@ -11,6 +11,8 @@ from collections import deque
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
+from app.auth import auth_arguments, normalize_auth
+
 
 VIDEO_ID = re.compile(r"[A-Za-z0-9_-]{11}\Z")
 
@@ -44,7 +46,7 @@ def validate_url(value: str) -> str:
     return f"https://www.youtube.com/watch?v={video_id}"
 
 
-def build_inspection_arguments(url: str, tools: dict[str, Path]) -> list[str]:
+def build_inspection_arguments(url: str, tools: dict[str, Path], *, auth=None) -> list[str]:
     return [
         "--ignore-config", "--no-plugin-dirs", "--no-remote-components", "--no-playlist",
         "--skip-download", "--simulate", "--dump-single-json", "--no-warnings", "--no-colors",
@@ -52,11 +54,12 @@ def build_inspection_arguments(url: str, tools: dict[str, Path]) -> list[str]:
         "--format", "bestvideo+bestaudio/best", "--merge-output-format", "mp4/mkv",
         "--ffmpeg-location", str(tools["ffmpeg"].parent),
         "--no-js-runtimes", "--js-runtimes", f"deno:{tools['deno']}",
+        *auth_arguments(auth),
         "--", validate_url(url),
     ]
 
 
-def build_arguments(url: str, folder: Path, tools: dict[str, Path], container: str = "auto", format_id: str | None = None, *, video=True, audio=True) -> list[str]:
+def build_arguments(url: str, folder: Path, tools: dict[str, Path], container: str = "auto", format_id: str | None = None, *, video=True, audio=True, auth=None) -> list[str]:
     if not video and not audio:
         raise ValueError("empty_selection")
     if container not in ({"auto", "mp4", "mkv", "webm"} if video else {"auto", "mp4", "mkv", "webm", "m4a", "opus"}):
@@ -86,6 +89,7 @@ def build_arguments(url: str, folder: Path, tools: dict[str, Path], container: s
         "--print", "post_process:MD_STAGE%(id)s",
         "--print", "after_move:MD_FILE%(filepath)j",
         *audio_args,
+        *auth_arguments(auth),
         "--", validate_url(url),
     ]
 
@@ -147,18 +151,29 @@ class Downloader(QObject):
         self._errors = deque(maxlen=12)
         self._result = None
         self._staging = None
+        self._auth_folder = None
 
-    def start(self, url: str, downloads: Path, components: Path, *, action="download", container="auto", format_id=None, video=True, audio=True):
+    def start(self, url: str, downloads: Path, components: Path, *, action="download", container="auto", format_id=None, video=True, audio=True, auth=None):
         if self.busy:
             return
         url = validate_url(url)
         if action not in {"inspect", "download"}:
             raise ValueError("Unsupported action")
+        auth = normalize_auth(auth)
         if action == "download":
             downloads.mkdir(parents=True, exist_ok=True)
             self._staging = Path(tempfile.mkdtemp(prefix=".media-downloader-", dir=downloads))
+        try:
+            if auth.get("source") == "file":
+                self._auth_folder = Path(tempfile.mkdtemp(prefix="yt-slop-dl-auth-"))
+        except OSError:
+            if self._staging:
+                self._cleanup(self._staging)
+                self._staging = None
+            raise
         self._request = {"url": url, "downloads": str(downloads), "components": str(components),
                          "staging": str(self._staging) if self._staging else None,
+                         "auth": auth, "auth_folder": str(self._auth_folder) if self._auth_folder else None,
                          "action": action, "container": container, "format_id": format_id, "video": video, "audio": audio}
         self._cancelled = False
         self._buffer = b""
@@ -284,6 +299,9 @@ class Downloader(QObject):
         if self._staging:
             self._cleanup(self._staging)
             self._staging = None
+        if self._auth_folder:
+            self._cleanup(self._auth_folder)
+            self._auth_folder = None
         self.busy = False
         result = self._result or ("error", "Worker finished without a result.")
         # A file already published successfully must remain visible even if cancel

@@ -23,6 +23,12 @@ Paste a YouTube watch, short-link or Shorts URL and click **Analyze** to inspect
 
 Video quality lists the available resolutions and frame rates; audio-only quality lists source codecs and bitrates in the preferred audio language. Audio-only Auto preserves the source audio without re-encoding (usually M4A for AAC or Opus). Compatible M4A/Opus containers also appear in audio-only mode. Both checkboxes may be cleared, but downloading stays disabled until a stream is selected. If a quality is available only as a combined video/audio file, audio-only extraction is supported; video-only requires a separate video stream and is disabled for that quality.
 
+## YouTube authorization
+
+Click **Authorization…** before analyzing a link. Choose a signed-in browser (optionally its profile name or folder), or an exported **Netscape cookies.txt** file containing YouTube cookies. Click **Apply**, then analyze the link again. The source applies to both analysis and downloading. Choose **None** to disable it. Native settings remember only the source, profile and file path; cookie contents and passwords are never saved there. Browser cookies are read by yt-dlp without exporting them. Imported files are validated and copied to a private temporary directory per operation, so the original is never modified; the copy is removed after success, error or cancellation. A force-quit/OS crash can leave temporary files in the OS temporary directory.
+
+This supports account-only, private and members-only videos **when the account has access and yt-dlp supports the content**. It does not unlock subscriptions or DRM. Cookies can expire; browser database locks, OS keychain permissions or browser encryption can prevent extraction. Close the browser or use a fresh file export if extraction fails. Keep exports private: cookies grant account access. See the official [cookie FAQ](https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp) and [YouTube export instructions](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies), including yt-dlp's account-use limitations. The app does not implement Google password/OAuth login or PO Token setup.
+
 ## Private components
 
 The first inspection installs missing tools automatically into the system application-data folder under `YT Slop DL/YT Slop DL/components`. Previously installed components are reused. Global installations are not used. Allow network access to GitHub and YouTube and sufficient space for both temporary streams and the final file.
@@ -41,6 +47,6 @@ Run on the target OS with `.[build]` installed. PyInstaller creates an applicati
 
 ## MVP limits
 
-One public, non-live video at a time. No playlists, login/cookies, subtitles, history, telemetry or update system. YouTube can reject requests or require authentication/PO tokens; these restrictions are shown as errors. Network access and GitHub API limits can affect initial component installation. Internet-free startup works after Python/Qt are installed; downloading always requires internet access.
+One non-live video at a time. No playlists, subtitles, history, telemetry or update system. YouTube can reject requests or require fresh cookies/PO tokens; these restrictions are shown as errors. Network access and GitHub API limits can affect initial component installation. Internet-free startup works after Python/Qt are installed; downloading always requires internet access.
 
 Temporary media is isolated in an app-owned hidden directory inside the selected destination and removed after success, error or cancellation. An OS crash/forced termination can leave that directory or an incomplete component-installation directory; these can be removed manually when the app is closed. Cancellation uses a dedicated POSIX process group or a Windows Job Object and never kills processes by executable name.

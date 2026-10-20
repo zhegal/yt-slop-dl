@@ -14,6 +14,14 @@ import app.downloader as module
 FAKE_WORKER = r'''
 import json, pathlib, subprocess, sys, time
 r = json.loads(sys.stdin.readline())
+if r.get('auth', {}).get('source') == 'file':
+    from app.auth import prepare_auth
+    try:
+        auth = prepare_auth(r['auth'], pathlib.Path(r['auth_folder']))
+    except ValueError as error:
+        print(json.dumps({'type':'error','message':str(error)}), flush=True)
+        sys.exit(1)
+    print(json.dumps({'type':'auth_prepared','path':auth['path']}), flush=True)
 if r.get('action') == 'inspect':
     print(json.dumps({'type':'metadata','info':{'title':'Test preview'}}), flush=True)
     sys.exit(0)
@@ -121,3 +129,45 @@ def test_inspection_returns_metadata_without_creating_downloads(qt_app, tmp_path
     assert events[0]['info']['title'] == 'Test preview'
     assert not downloads.exists()
     assert not downloader.busy
+
+
+@pytest.mark.parametrize('outcome', ['inspect', 'success', 'error', 'cancelled', 'invalid'])
+def test_auth_snapshot_cleanup_and_retry(qt_app, tmp_path, fake_worker, monkeypatch, outcome):
+    from test_auth import COOKIE_DATA
+    # Keep test-owned private temporary directories observable and isolated.
+    original_mkdtemp = module.tempfile.mkdtemp
+    monkeypatch.setattr(module.tempfile, 'mkdtemp', lambda **kw: original_mkdtemp(**({'dir': str(tmp_path)} | kw)))
+    cookie_file = tmp_path / 'input.txt'
+    data = b'bad export' if outcome == 'invalid' else COOKIE_DATA
+    cookie_file.write_bytes(data)
+    downloader = module.Downloader()
+    results, snapshots = [], []
+    downloader.finished.connect(lambda *result: results.append(result))
+    def on_event(event):
+        if event['type'] == 'auth_prepared':
+            snapshots.append(Path(event['path']))
+        if event['type'] == 'child_started':
+            downloader.cancel()
+    downloader.event.connect(on_event)
+    video_id = {'inspect': 'abcdefghijk', 'success': '12345678901', 'error': 'abcdefghijk',
+                'cancelled': 'dQw4w9WgXcQ', 'invalid': 'abcdefghijk'}[outcome]
+    downloader.start('https://youtu.be/' + video_id, tmp_path / 'downloads', tmp_path / 'tools',
+                     action='inspect' if outcome == 'inspect' else 'download',
+                     auth={'source': 'file', 'path': str(cookie_file)})
+    try:
+        pump_until(qt_app, lambda: bool(results))
+        expected = {'inspect': 'inspected', 'invalid': 'error'}.get(outcome, outcome)
+        assert results[0][0] == expected
+        assert cookie_file.read_bytes() == data
+        assert not list(tmp_path.glob('yt-slop-dl-auth-*'))
+        assert all(not path.exists() for path in snapshots)
+        assert not list((tmp_path / 'downloads').glob('.media-downloader-*'))
+        # A failure/cancellation must not leak authentication into the next job.
+        downloader.start('https://youtu.be/12345678901', tmp_path / 'downloads', tmp_path / 'tools')
+        pump_until(qt_app, lambda: len(results) == 2)
+        assert results[1][0] == 'success'
+        assert downloader._request['auth'] == {}
+    finally:
+        if downloader.busy:
+            downloader.cancel()
+            pump_until(qt_app, lambda: not downloader.busy)

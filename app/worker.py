@@ -12,6 +12,7 @@ from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
+from app.auth import prepare_auth
 from app.dependencies import DependencyError, ensure_dependencies
 from app.downloader import build_arguments, build_inspection_arguments, error_message, parse_output, validate_url
 from app.media import summarize_info
@@ -100,10 +101,11 @@ def run_download(request: dict) -> int:
     downloads = Path(request["downloads"])
     staging = Path(request["staging"]).resolve()
     components = Path(request["components"])
+    auth = prepare_auth(request.get("auth"), Path(request["auth_folder"]) if request.get("auth_folder") else None)
     tools = ensure_dependencies(components, emit)
     emit({"type": "extracting"})
     video, audio = request.get("video", True), request.get("audio", True)
-    args = [str(tools["yt-dlp"]), *build_arguments(url, staging, tools, request.get("container", "auto"), request.get("format_id"), video=video, audio=audio)]
+    args = [str(tools["yt-dlp"]), *build_arguments(url, staging, tools, request.get("container", "auto"), request.get("format_id"), video=video, audio=audio, auth=auth)]
     lines = deque(maxlen=25)
     result = None
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -164,9 +166,10 @@ def fetch_thumbnail(info: dict) -> str | None:
 
 def run_inspection(request: dict) -> int:
     components = Path(request["components"])
+    auth = prepare_auth(request.get("auth"), Path(request["auth_folder"]) if request.get("auth_folder") else None)
     tools = ensure_dependencies(components, emit)
     emit({"type": "extracting"})
-    args = [str(tools["yt-dlp"]), *build_inspection_arguments(request["url"], tools)]
+    args = [str(tools["yt-dlp"]), *build_inspection_arguments(request["url"], tools, auth=auth)]
     info, lines = None, deque(maxlen=25)
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
     with subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

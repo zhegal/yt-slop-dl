@@ -2,6 +2,7 @@
 
 import math
 import base64
+import json
 from pathlib import Path
 
 from PySide6.QtCore import QFileSystemWatcher, QLocale, QSettings, QStandardPaths, Qt, QTimer, QUrl
@@ -12,6 +13,8 @@ from PySide6.QtWidgets import (
 )
 
 from app.downloader import Downloader, validate_url
+from app.auth import AUTH_ERRORS, normalize_auth
+from app.auth_dialog import AuthDialog
 from app.i18n import language_for, translate
 from app.media import format_duration, select_streams
 from app import APP_NAME
@@ -34,6 +37,11 @@ class Window(QWidget):
         super().__init__()
         self.language = language_for(language or QLocale.system().name())
         self._settings = QSettings()
+        try:
+            self._auth = normalize_auth(json.loads(self._settings.value("authentication", "{}", type=str)))
+        except (ValueError, TypeError):
+            self._auth = {}
+            self._settings.remove("authentication")
         self._default_downloads = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.DownloadLocation) or Path.home() / "Downloads")
         self.downloads = self._saved_destination()
         self.components = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)) / "components"
@@ -53,7 +61,8 @@ class Window(QWidget):
         self.setWindowTitle(APP_NAME)
         self.setWindowIcon(QIcon(str(Path(__file__).parent / "assets" / "icon.svg")))
         self.resize(700, 420)
-        self.setMinimumSize(580, 380)
+        # Let the layout calculate the minimum height as visible content changes.
+        self.setMinimumWidth(580)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(32, 30, 32, 24)
@@ -71,6 +80,7 @@ class Window(QWidget):
         row = QHBoxLayout()
         row.setSpacing(10)
         self.url = QLineEdit()
+        self.url.setObjectName("videoUrl")
         self.url.setPlaceholderText("https://www.youtube.com/watch?v=…")
         self.url.setAccessibleName(self.t("url"))
         self.url.setClearButtonEnabled(True)
@@ -86,6 +96,11 @@ class Window(QWidget):
         row.addWidget(self.url, 1)
         row.addWidget(self.download)
         layout.addLayout(row)
+        self.authentication = QPushButton()
+        self.authentication.setMinimumHeight(32)
+        self.authentication.clicked.connect(self._configure_auth)
+        self._update_auth_button()
+        layout.addWidget(self.authentication, alignment=Qt.AlignmentFlag.AlignLeft)
 
         self.preview = QFrame()
         self.preview.setObjectName("preview")
@@ -162,6 +177,7 @@ class Window(QWidget):
         status_font = QFont(self.font())
         status_font.setWeight(QFont.Weight.DemiBold)
         self.status.setFont(status_font)
+        self.status.setMinimumHeight(self.status.fontMetrics().height() + 4)
         self.cancel = QPushButton(self.t("cancel"))
         self.cancel.setMinimumHeight(32)
         self.cancel.clicked.connect(self._cancel)
@@ -223,8 +239,8 @@ class Window(QWidget):
         self.setStyleSheet(f"""
             QLabel#muted {{ color: {muted}; }}
             QFrame#card, QFrame#preview {{ border: 1px solid {border}; border-radius: 12px; }}
-            QLineEdit {{ padding: 0 12px; border: 1px solid {border}; border-radius: 8px; background: palette(base); }}
-            QLineEdit:focus {{ border: 1px solid #2780ff; }}
+            QLineEdit#videoUrl {{ padding: 0 12px; border: 1px solid {border}; border-radius: 8px; background: palette(base); }}
+            QLineEdit#videoUrl:focus {{ border: 1px solid #2780ff; }}
             QPushButton {{ padding: 5px 14px; }}
             QPushButton#primary {{ background: #1476ef; color: white; border: none; border-radius: 8px; font-weight: 600; }}
             QPushButton#primary:hover {{ background: #0864d5; }}
@@ -253,8 +269,8 @@ class Window(QWidget):
         self.detail.setText(self.t("first_run"))
         self.progress.setRange(0, 0)
         try:
-            self.downloader.start(url, self.downloads, self.components, action="inspect")
-        except OSError as error:
+            self.downloader.start(url, self.downloads, self.components, action="inspect", auth=self._auth)
+        except (OSError, ValueError) as error:
             self._finished("error", str(error))
 
     def _link_changed(self):
@@ -365,7 +381,7 @@ class Window(QWidget):
             self.progress.setRange(0, 0)
             self.downloader.start(self._info["url"], self.downloads, self.components,
                                   container=container, format_id=self._selection["format_id"],
-                                  video=self.video_check.isChecked(), audio=self.audio_check.isChecked())
+                                  video=self.video_check.isChecked(), audio=self.audio_check.isChecked(), auth=self._auth)
         except (OSError, ValueError) as error:
             self._finished("error", str(error))
 
@@ -380,6 +396,7 @@ class Window(QWidget):
         self.video_check.setEnabled(not busy)
         self.audio_check.setEnabled(not busy)
         self.choose_folder.setEnabled(not busy)
+        self.authentication.setEnabled(not busy)
         if not busy:
             self._check_destination()
 
@@ -437,11 +454,38 @@ class Window(QWidget):
             self.open_folder.show()
         else:
             # Keep upstream diagnostics, whose language is controlled by yt-dlp.
+            if message in AUTH_ERRORS:
+                message = self.t(message)
+            elif outcome == "error" and self._auth:
+                message = (message + "\n\n" + self.t("auth_error_hint")).strip()
             self.detail.setText(message[:1000] if message else self.t("retry"))
             self.detail.setToolTip(message)
         self.progress.setAccessibleName(self.status.text())
         if self._closing:
             QTimer.singleShot(0, self.close)
+
+    def _update_auth_button(self):
+        source = self.t("auth_none")
+        if self._auth.get("source") == "browser":
+            source = self._auth["browser"].capitalize()
+        elif self._auth.get("source") == "file":
+            source = self.t("auth_file")
+        self.authentication.setText(self.t("auth_button", source=source))
+
+    def _configure_auth(self):
+        if self.downloader.busy:
+            return
+        dialog = AuthDialog(self.language, self._auth, self)
+        if dialog.exec() == AuthDialog.DialogCode.Accepted and dialog.auth != self._auth:
+            self._auth = dialog.auth
+            if self._auth:
+                self._settings.setValue("authentication", json.dumps(self._auth, ensure_ascii=False))
+            else:
+                self._settings.remove("authentication")
+            self._settings.sync()
+            self._update_auth_button()
+            # Formats and access can change with the account. Require analysis again.
+            self._link_changed()
 
     def _saved_destination(self):
         saved = self._settings.value("download_folder", "", type=str)

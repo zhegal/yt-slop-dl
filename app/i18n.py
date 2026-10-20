@@ -1,6 +1,26 @@
 """Three small UI dictionaries, selected from the system locale."""
 
 TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then click Download.',
+        'auth_title': 'YouTube authorization',
+        'auth_button': 'Authorization: {source}…',
+        'auth_source': 'Cookie source',
+        'auth_none': 'None',
+        'auth_browser': 'Browser',
+        'auth_file': 'cookies.txt file',
+        'auth_profile': 'Browser profile',
+        'auth_profile_hint': 'Optional: profile name or folder path',
+        'auth_browse': 'Choose…',
+        'auth_apply': 'Apply',
+        'auth_hint': 'Sign in to YouTube in the selected browser, or choose a Netscape cookies.txt export '
+                     'containing YouTube cookies. Access depends on your account and yt-dlp support; '
+                     'DRM-protected media is unsupported. Only the source selection is saved. '
+                     'Cookies grant account access: keep exported files private.',
+        'auth_error_hint': 'Check that this account can play the video and its cookies have not expired. '
+                           'If browser extraction fails, close the browser, check OS access permissions '
+                           'or use a Netscape cookies.txt export.',
+        'auth_invalid': 'Choose a valid cookie source and browser profile (without control characters or ::).',
+        'auth_file_unreadable': 'Cannot read the selected cookies file. Choose an existing readable file.',
+        'auth_file_invalid': 'Choose a valid Netscape cookies.txt export containing YouTube cookies (up to 10 MB).',
         'confirm': 'Download',
         'container': 'Container',
         'auto': 'Auto · MP4 / MKV',
@@ -51,6 +71,26 @@ TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then 
         'video_only_unavailable': 'This quality has no separate video stream. Choose another quality or '
                                   'include audio.'},
  'ru': {'choose_container': 'Выберите качество, потоки и контейнер, затем нажмите «Скачать».',
+        'auth_title': 'Авторизация YouTube',
+        'auth_button': 'Авторизация: {source}…',
+        'auth_source': 'Источник cookies',
+        'auth_none': 'Без авторизации',
+        'auth_browser': 'Браузер',
+        'auth_file': 'Файл cookies.txt',
+        'auth_profile': 'Профиль браузера',
+        'auth_profile_hint': 'Необязательно: имя профиля или путь к его папке',
+        'auth_browse': 'Выбрать…',
+        'auth_apply': 'Применить',
+        'auth_hint': 'Войдите в YouTube в выбранном браузере или укажите экспорт cookies.txt в формате Netscape '
+                     'с cookies YouTube. Доступ зависит от прав аккаунта и поддержки yt-dlp; видео с DRM '
+                     'не поддерживаются. Сохраняется только выбор источника. Cookies дают доступ к аккаунту: '
+                     'храните экспортированный файл в тайне.',
+        'auth_error_hint': 'Проверьте, что аккаунт может воспроизвести видео и cookies не истекли. '
+                           'Если чтение из браузера не удалось, закройте браузер, проверьте разрешения ОС '
+                           'или используйте экспорт cookies.txt в формате Netscape.',
+        'auth_invalid': 'Выберите корректный источник cookies и профиль браузера (без управляющих символов и ::).',
+        'auth_file_unreadable': 'Не удалось прочитать файл cookies. Выберите существующий доступный файл.',
+        'auth_file_invalid': 'Выберите корректный экспорт cookies.txt в формате Netscape с cookies YouTube (до 10 МБ).',
         'confirm': 'Скачать',
         'container': 'Контейнер',
         'auto': 'Авто · MP4 / MKV',
@@ -101,6 +141,26 @@ TEXT = {'en': {'choose_container': 'Choose quality, streams and container, then 
         'video_only_unavailable': 'Для этого качества нет отдельного видеопотока. Выберите другое качество '
                                   'или включите аудио.'},
  'uk': {'choose_container': 'Виберіть якість, потоки й контейнер, потім натисніть «Завантажити».',
+        'auth_title': 'Авторизація YouTube',
+        'auth_button': 'Авторизація: {source}…',
+        'auth_source': 'Джерело cookies',
+        'auth_none': 'Без авторизації',
+        'auth_browser': 'Браузер',
+        'auth_file': 'Файл cookies.txt',
+        'auth_profile': 'Профіль браузера',
+        'auth_profile_hint': 'Необов’язково: назва профілю або шлях до його папки',
+        'auth_browse': 'Вибрати…',
+        'auth_apply': 'Застосувати',
+        'auth_hint': 'Увійдіть у YouTube у вибраному браузері або вкажіть експорт cookies.txt у форматі Netscape '
+                     'з cookies YouTube. Доступ залежить від прав облікового запису та підтримки yt-dlp; '
+                     'відео з DRM не підтримуються. Зберігається лише вибір джерела. Cookies дають доступ '
+                     'до облікового запису: зберігайте експортований файл у таємниці.',
+        'auth_error_hint': 'Перевірте, що обліковий запис може відтворити відео й cookies не прострочені. '
+                           'Якщо читання з браузера не вдалося, закрийте браузер, перевірте дозволи ОС '
+                           'або скористайтеся експортом cookies.txt у форматі Netscape.',
+        'auth_invalid': 'Виберіть коректне джерело cookies і профіль браузера (без керівних символів та ::).',
+        'auth_file_unreadable': 'Не вдалося прочитати файл cookies. Виберіть наявний доступний файл.',
+        'auth_file_invalid': 'Виберіть коректний експорт cookies.txt у форматі Netscape з cookies YouTube (до 10 МБ).',
         'confirm': 'Завантажити',
         'container': 'Контейнер',
         'auto': 'Авто · MP4 / MKV',
