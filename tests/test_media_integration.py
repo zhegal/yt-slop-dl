@@ -143,3 +143,78 @@ def test_selected_quality_and_only_requested_streams(tmp_path,single_stream_fixt
         assert hashes(source,'a') == hashes(final,'a')
     if not video and container=='auto':
         assert final.suffix == ('.opus' if quality=='opus' else '.m4a')
+
+
+@pytest.mark.parametrize('video', [True, False])
+def test_selected_dub_preserves_audio_packets(tmp_path, single_stream_fixture, video):
+    from app.media import select_streams
+    tools, run, folder, base = single_stream_fixture
+    dub = tmp_path/'dub.m4a'
+    run([tools['ffmpeg'], '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+         'sine=frequency=880:duration=0.4', '-vn', '-c:a', 'aac', dub])
+    formats = [f | ({'language':'en'} if f['acodec'] != 'none' else {}) for f in base['formats']]
+    formats.append({'format_id':'dub-ru', 'url':dub.as_uri(), 'ext':'m4a', 'vcodec':'none',
+                    'acodec':'mp4a', 'language':'ru', 'abr':128})
+    info = base | {'formats':formats}
+    summary = summarize_info(info | {'requested_formats':[formats[1], formats[-2]]})
+    selected = select_streams(summary, 'low' if video else 'dub-ru', video=video, audio_track_id='ru')
+    args = build_arguments(info['webpage_url'], tmp_path/'out', tools, 'mkv' if video else 'auto',
+                           selected['format_id'], video=video)
+    fixture = tmp_path/'info.json'
+    fixture.write_text(json.dumps(info), encoding='utf-8')
+    result = run([tools['yt-dlp'], *args[:-2], '--enable-file-urls', '--load-info-json', fixture])
+    final = Path(next(event['path'] for line in result.stdout.splitlines()
+                      if (event := parse_output(line))['type'] == 'file'))
+    def hashes(path):
+        data = run([tools['ffprobe'], '-v', 'error', '-select_streams', 'a', '-show_packets',
+                    '-show_data_hash', 'sha256', '-show_entries', 'packet=data_hash', '-of', 'json', path])
+        return [packet['data_hash'] for packet in json.loads(data.stdout)['packets']]
+    assert hashes(final) == hashes(dub)
+    assert hashes(final) != hashes(folder/'aac.m4a')
+    probe = json.loads(run([tools['ffprobe'], '-v', 'error', '-show_entries', 'stream=codec_type',
+                           '-of', 'json', final]).stdout)
+    assert [s['codec_type'] for s in probe['streams']].count('audio') == 1
+    assert {s['codec_type'] for s in probe['streams']} == ({'video','audio'} if video else {'audio'})
+
+
+@pytest.mark.parametrize('video,container,primary', [(True,'mkv','ru'), (True,'mp4','en'), (True,'webm','ru'), (False,'auto','ru')])
+def test_multiple_tracks_order_default_language_and_stream_copy(tmp_path, single_stream_fixture, video, container, primary):
+    from app.media import select_streams
+    tools, run, folder, base = single_stream_fixture
+    dub = tmp_path/'dub.webm'
+    run([tools['ffmpeg'], '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+         'sine=frequency=880:duration=0.4', '-vn', '-c:a', 'libopus', dub])
+    # WebM needs VP9/AV1 video; generate a tiny fixture for this case only.
+    if container == 'webm':
+        v = tmp_path/'video.webm'
+        run([tools['ffmpeg'], '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i',
+             'color=c=black:s=32x32:d=0.4', '-an', '-c:v', 'libvpx-vp9', v])
+        video_format = {'format_id':'v', 'url':v.as_uri(), 'ext':'webm', 'vcodec':'vp9', 'acodec':'none', 'height':32}
+    else:
+        video_format = base['formats'][0]
+    english = base['formats'][-1] | {'language':'en'}
+    russian = {'format_id':'dub-ru','url':dub.as_uri(),'ext':'webm','vcodec':'none','acodec':'opus','language':'ru'}
+    info = base | {'formats':[video_format, russian, english]}
+    summary = summarize_info(info | {'requested_formats':[video_format, english]})
+    order = [primary, 'en' if primary == 'ru' else 'ru']
+    quality = video_format['format_id'] if video else 'dub-ru'
+    selected = select_streams(summary, quality, video=video, audio_track_ids=order)
+    tracks = [s | {'title': 'Русский "дубляж"' if s['language']=='ru' else 'English original'} for s in selected['audio_streams']]
+    args = build_arguments(info['webpage_url'], tmp_path/'out', tools, container, selected['format_id'], video=video, audio_tracks=tracks)
+    fixture = tmp_path/'info.json'
+    fixture.write_text(json.dumps(info), encoding='utf-8')
+    result = run([tools['yt-dlp'], *args[:-2], '--enable-file-urls', '--load-info-json', fixture])
+    final = Path(next(event['path'] for line in result.stdout.splitlines() if (event := parse_output(line))['type']=='file'))
+    probe = json.loads(run([tools['ffprobe'], '-v', 'error', '-show_streams', '-of', 'json', final]).stdout)
+    audios = [s for s in probe['streams'] if s['codec_type']=='audio']
+    assert len(audios) == 2
+    assert [s['tags']['language'] for s in audios] == [('rus' if language=='ru' else 'eng') for language in order]
+    assert [s['disposition']['default'] for s in audios] == [1,0]
+    assert [s['tags'].get('title') or s['tags'].get('handler_name') for s in audios] == [s['title'] for s in tracks]
+    assert {s['codec_type'] for s in probe['streams']} == ({'video','audio'} if video else {'audio'})
+    def hashes(path, stream):
+        data = json.loads(run([tools['ffprobe'], '-v', 'error', '-select_streams', stream, '-show_packets',
+                              '-show_data_hash', 'sha256', '-show_entries', 'packet=data_hash', '-of', 'json', path]).stdout)
+        return [p['data_hash'] for p in data['packets']]
+    for index, language in enumerate(order):
+        assert hashes(final, f'a:{index}') == hashes(dub if language=='ru' else folder/'opus.webm', 'a:0')

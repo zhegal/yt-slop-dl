@@ -1,5 +1,7 @@
 """Headless worker, launched and contained by the GUI's QProcess."""
 
+from app import __version__
+
 import io
 import base64
 import json
@@ -151,7 +153,7 @@ def run_download(request: dict) -> int:
     apply_update(components, tools, emit, tool_environment(components))
     emit({"type": "extracting"})
     video, audio = request.get("video", True), request.get("audio", True)
-    args = [str(tools["yt-dlp"]), *build_arguments(url, staging, tools, request.get("container", "auto"), request.get("format_id"), video=video, audio=audio, auth=auth)]
+    args = [str(tools["yt-dlp"]), *build_arguments(url, staging, tools, request.get("container", "auto"), request.get("format_id"), video=video, audio=audio, auth=auth, audio_tracks=request.get("audio_tracks"))]
     lines = deque(maxlen=25)
     result = None
     flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
@@ -178,14 +180,20 @@ def run_download(request: dict) -> int:
         raise RuntimeError("No video was downloaded. Live/upcoming streams are not supported.")
     if not result.is_relative_to(staging) or not result.is_file() or result.suffix not in {".mp4", ".mkv", ".webm", ".m4a", ".opus", ".mp3", ".ogg", ".aac"}:
         raise RuntimeError("yt-dlp did not produce a valid media file.")
-    if not video or not audio:
-        probe = subprocess.run([str(tools["ffprobe"]), "-v", "error", "-show_entries", "stream=codec_type", "-of", "json", str(result)],
+    multiple = audio and len(request.get("audio_tracks") or []) > 1
+    if not video or not audio or multiple:
+        probe = subprocess.run([str(tools["ffprobe"]), "-v", "error", "-show_streams", "-of", "json", str(result)],
                                capture_output=True, text=True, encoding="utf-8", timeout=15, check=True,
                                env=tool_environment(components), creationflags=flags)
-        present = {s["codec_type"] for s in json.loads(probe.stdout)["streams"]} & {"video", "audio"}
+        streams = json.loads(probe.stdout)["streams"]
+        present = {s["codec_type"] for s in streams} & {"video", "audio"}
         expected = ({"video"} if video else set()) | ({"audio"} if audio else set())
         if present != expected:
             raise RuntimeError("Downloaded streams do not match the video/audio selection.")
+        if multiple:
+            audio_streams = [s for s in streams if s["codec_type"] == "audio"]
+            if len(audio_streams) != len(request["audio_tracks"]) or [s.get("disposition", {}).get("default", 0) for s in audio_streams] != [1] + [0] * (len(audio_streams) - 1):
+                raise RuntimeError("Downloaded audio tracks or the default track do not match the selection.")
     emit({"type": "saving"})
     target = publish_file(result, downloads)
     emit({"type": "success", "path": str(target)})
@@ -203,7 +211,7 @@ def fetch_thumbnail(info: dict) -> str | None:
         if parsed.scheme != "https" or not (host.endswith(".ytimg.com") or host in {"ytimg.com", "img.youtube.com"}):
             continue
         try:
-            with urlopen(Request(url, headers={"User-Agent": "YTSlopDL/0.1"}), timeout=8) as response:
+            with urlopen(Request(url, headers={"User-Agent": f"YTSlopDL/{__version__}"}), timeout=8) as response:
                 data = response.read(2 * 1024 * 1024 + 1)
                 if 0 < len(data) <= 2 * 1024 * 1024:
                     return base64.b64encode(data).decode("ascii")

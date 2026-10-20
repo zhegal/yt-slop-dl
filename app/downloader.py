@@ -4,6 +4,7 @@ import json
 import os
 import re
 import signal
+import shlex
 import shutil
 import sys
 import tempfile
@@ -59,7 +60,7 @@ def build_inspection_arguments(url: str, tools: dict[str, Path], *, auth=None) -
     ]
 
 
-def build_arguments(url: str, folder: Path, tools: dict[str, Path], container: str = "auto", format_id: str | None = None, *, video=True, audio=True, auth=None) -> list[str]:
+def build_arguments(url: str, folder: Path, tools: dict[str, Path], container: str = "auto", format_id: str | None = None, *, video=True, audio=True, auth=None, audio_tracks=None) -> list[str]:
     if not video and not audio:
         raise ValueError("empty_selection")
     if container not in ({"auto", "mp4", "mkv", "webm"} if video else {"auto", "mp4", "mkv", "webm", "m4a", "opus"}):
@@ -68,7 +69,20 @@ def build_arguments(url: str, folder: Path, tools: dict[str, Path], container: s
         raise ValueError("Invalid format selection")
     progress = 'MD_PROGRESS{"downloaded":%(progress.downloaded_bytes)j,"total":%(progress.total_bytes,progress.total_bytes_estimate)j,"speed":%(progress.speed)j,"eta":%(progress.eta)j,"status":%(progress.status)j,"format":%(info.format_id)j}'
     selector = "bestvideo+bestaudio/best" if video and audio else "bestvideo" if video else "bestaudio/best"
-    audio_args = ["--extract-audio", "--audio-format", "best"] if not video else []
+    multiple = audio and audio_tracks is not None and len(audio_tracks) > 1
+    if multiple and (not format_id or container in {"m4a", "opus"}):
+        raise ValueError("Invalid multitrack selection")
+    audio_args = ["--extract-audio", "--audio-format", "best"] if not video and not multiple else []
+    metadata_args = []
+    if multiple:
+        flags = []
+        for index, track in enumerate(audio_tracks):
+            title = str(track.get("title") or track.get("language") or "und")[:300].replace("\0", "").replace("\n", " ").replace("\r", " ")
+            flags += [f"-disposition:a:{index}", "default" if index == 0 else "0",
+                      f"-metadata:s:a:{index}", f"title={title}", f"-metadata:s:a:{index}", f"handler_name={title}"]
+        metadata_args = ["--audio-multistreams", "--embed-metadata", "--no-embed-info-json", "--no-embed-chapters",
+                         "--postprocessor-args", "Metadata+ffmpeg_o:" + shlex.join(flags)]
+    output_container = "mkv" if multiple and container == "auto" else container
     return [
         "--ignore-config", "--no-plugin-dirs", "--no-remote-components",
         "--no-playlist", "--no-simulate", "--no-overwrites", "--no-continue",
@@ -77,9 +91,9 @@ def build_arguments(url: str, folder: Path, tools: dict[str, Path], container: s
         "--output-na-placeholder", "null",
         "--fragment-retries", "3", "--abort-on-unavailable-fragments",
         "--format", format_id or selector,
-        "--merge-output-format", container if container in {"mp4", "mkv", "webm"} else "mp4/mkv",
+        "--merge-output-format", output_container if output_container in {"mp4", "mkv", "webm"} else "mp4/mkv",
         # A combined fallback can be WebM. Remux that container to MKV with -c copy.
-        "--remux-video", "webm>mkv" if container == "auto" else container,
+        "--remux-video", "webm>mkv" if output_container == "auto" else output_container,
         "--match-filters", "!is_live & !is_upcoming",
         "--ffmpeg-location", str(tools["ffmpeg"].parent),
         "--no-js-runtimes", "--js-runtimes", f"deno:{tools['deno']}",
@@ -89,6 +103,7 @@ def build_arguments(url: str, folder: Path, tools: dict[str, Path], container: s
         "--print", "post_process:MD_STAGE%(id)s",
         "--print", "after_move:MD_FILE%(filepath)j",
         *audio_args,
+        *metadata_args,
         *auth_arguments(auth),
         "--", validate_url(url),
     ]
@@ -153,7 +168,7 @@ class Downloader(QObject):
         self._staging = None
         self._auth_folder = None
 
-    def start(self, url: str, downloads: Path, components: Path, *, action="download", container="auto", format_id=None, video=True, audio=True, auth=None):
+    def start(self, url: str, downloads: Path, components: Path, *, action="download", container="auto", format_id=None, video=True, audio=True, auth=None, audio_tracks=None):
         if self.busy:
             return
         url = validate_url(url)
@@ -175,6 +190,8 @@ class Downloader(QObject):
                          "staging": str(self._staging) if self._staging else None,
                          "auth": auth, "auth_folder": str(self._auth_folder) if self._auth_folder else None,
                          "action": action, "container": container, "format_id": format_id, "video": video, "audio": audio}
+        if audio_tracks is not None:
+            self._request["audio_tracks"] = audio_tracks
         self._launch()
 
     def check_updates(self, components: Path):

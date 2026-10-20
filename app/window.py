@@ -15,9 +15,10 @@ from PySide6.QtWidgets import (
 from app.downloader import Downloader, validate_url
 from app.auth import AUTH_ERRORS, normalize_auth, reimport_needed, saved_session
 from app.auth_dialog import AuthDialog
+from app.audio_dialog import AudioTracksDialog, audio_track_text
 from app.i18n import LANGUAGES, language_for, translate
-from app.media import format_duration, select_streams
-from app import APP_NAME
+from app.media import audio_options_for, format_duration, select_streams
+from app import APP_NAME, __version__
 
 
 def readable_size(value: float) -> str:
@@ -68,9 +69,10 @@ class Window(QWidget):
         self._closing = False
         self._formats = []
         self._info = None
+        self._audio_track_ids = []
         self._selection = None
         self.result_path = None
-        self.setWindowTitle(APP_NAME)
+        self.setWindowTitle(f"{APP_NAME} {__version__}")
         self.setWindowIcon(QIcon(str(Path(__file__).parent / "assets" / "icon.png")))
         self.resize(700, 420)
         # Let the layout calculate the minimum height as visible content changes.
@@ -165,7 +167,7 @@ class Window(QWidget):
         self.qualities = QLabel()
         self.qualities.setObjectName("muted")
         self.qualities.setWordWrap(True)
-        preview_layout.addWidget(self.qualities)
+        description.addWidget(self.qualities)
         quality_row = QHBoxLayout()
         self.quality_label = QLabel(self.t("quality"))
         quality_row.addWidget(self.quality_label)
@@ -181,6 +183,18 @@ class Window(QWidget):
             checkbox.toggled.connect(self._refresh_quality_options)
             quality_row.addWidget(checkbox)
         preview_layout.addLayout(quality_row)
+        track_row = QHBoxLayout()
+        self.audio_tracks_button = QPushButton(self.t("audio_tracks_button"))
+        self.audio_tracks_button.setMinimumHeight(36)
+        self.audio_tracks_button.clicked.connect(self._configure_audio_tracks)
+        track_row.addWidget(self.audio_tracks_button)
+        track_row.addStretch()
+        preview_layout.addLayout(track_row)
+        self.audio_tracks_summary = QLabel()
+        self.audio_tracks_summary.setWordWrap(True)
+        self.audio_tracks_summary.setTextFormat(Qt.TextFormat.PlainText)
+        self.audio_tracks_summary.setObjectName("muted")
+        preview_layout.addWidget(self.audio_tracks_summary)
         selection = QHBoxLayout()
         self.container_label = QLabel(self.t("container"))
         selection.addWidget(self.container_label)
@@ -307,6 +321,7 @@ class Window(QWidget):
             (self.title, "title"), (self.subtitle, "subtitle"), (self.download, "analysis"),
             (self.cancel, "cancel"), (self.confirm, "confirm"), (self.open_file, "open_file"), (self.open_folder, "open"),
             (self.video_check, "video"), (self.audio_check, "audio"), (self.quality_label, "quality"),
+            (self.audio_tracks_button, "audio_tracks_button"),
             (self.container_label, "container"), (self.container_note, "container_hint"),
             (self.choose_folder, "choose_folder"), (self.footer, "first_run"), (self.language_label, "language"),
         ):
@@ -333,10 +348,13 @@ class Window(QWidget):
             if self.thumbnail.text():
                 self.thumbnail.setText(self.t("no_thumbnail"))
             video = self.video_check.isChecked()
-            options = self._info["video_options"] if video else self._info["audio_options"]
+            options = self._info["video_options"] if video else audio_options_for(self._info, self._audio_track_ids[0])
+            if not video and len(self._audio_track_ids) > 1:
+                options = options[:1]
+            self._update_track_summary()
             for index, option in enumerate(options):
                 self.quality.setItemText(index, self._quality_text(option, index, video))
-            self.container.setItemText(0, self.t("auto" if video else "auto_audio"))
+            self.container.setItemText(0, self._auto_container_text())
             for index in range(1, self.container.count()):
                 name = self.container.itemData(index).upper()
                 enabled = self.container.model().item(index).isEnabled()
@@ -416,6 +434,7 @@ class Window(QWidget):
                     self.thumbnail.setPixmap(pixmap.scaled(self.thumbnail.size(), Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
             except ValueError:
                 pass
+        self._audio_track_ids = [info.get("default_audio_track") or self._audio_tracks()[0]["id"]]
         self._refresh_quality_options()
         self.preview.show()
         self.resize(max(self.width(), 740), max(self.height(), 680))
@@ -424,7 +443,35 @@ class Window(QWidget):
         meta = [self._info.get("channel", ""), self.t("duration", value=format_duration(self._info.get("duration")))]
         self.video_meta.setText("\n".join(part for part in meta if part))
 
+    def _audio_tracks(self):
+        return self._info.get("audio_tracks") or [{"id": "und", "language": None, "options": self._info["audio_options"]}]
+
+    def _configure_audio_tracks(self):
+        if self.downloader.busy or not self._info or not self.audio_check.isChecked():
+            return
+        dialog = AudioTracksDialog(self.language, self._audio_tracks(), self._audio_track_ids, self)
+        if dialog.exec() == AudioTracksDialog.DialogCode.Accepted:
+            self._audio_track_ids = dialog.selected_ids
+            self._refresh_quality_options()
+
+    def _update_track_summary(self):
+        if not self.audio_check.isChecked():
+            self.audio_tracks_summary.setText(self.t("audio_disabled"))
+            return
+        tracks = {track["id"]: track for track in self._audio_tracks()}
+        labels = [f"{i + 1}. {audio_track_text(tracks[key], self.language)}" +
+                  (" (" + self.t("primary_audio_track") + ")" if i == 0 else "")
+                  for i, key in enumerate(self._audio_track_ids)]
+        self.audio_tracks_summary.setText(self.t("selected_audio_tracks", tracks="; ".join(labels)))
+
+    def _auto_container_text(self):
+        if self.audio_check.isChecked() and len(self._audio_track_ids) > 1:
+            return self.t("auto_multitrack")
+        return self.t("auto" if self.video_check.isChecked() else "auto_audio")
+
     def _quality_text(self, option, index, video):
+        if not video and len(self._audio_track_ids) > 1:
+            return self.t("best_audio_tracks")
         if video:
             label = f"{option.get('height') or '—'}p"
             if option.get("fps"):
@@ -442,7 +489,9 @@ class Window(QWidget):
             return
         previous = self.quality.currentData()
         video = self.video_check.isChecked()
-        options = self._info["video_options"] if video else self._info["audio_options"]
+        options = self._info["video_options"] if video else audio_options_for(self._info, self._audio_track_ids[0])
+        if not video and len(self._audio_track_ids) > 1:
+            options = options[:1]
         self.quality.blockSignals(True)
         self.quality.clear()
         for index, option in enumerate(options):
@@ -459,12 +508,13 @@ class Window(QWidget):
         self._selection = None
         video, audio = self.video_check.isChecked(), self.audio_check.isChecked()
         try:
-            self._selection = select_streams(self._info, self.quality.currentData(), video, audio)
+            self._selection = select_streams(self._info, self.quality.currentData(), video, audio,
+                                             audio_track_ids=self._audio_track_ids)
         except ValueError as error:
             self._set_detail(str(error))
         previous = self.container.currentData()
         self.container.clear()
-        self.container.addItem(self.t("auto") if video else self.t("auto_audio"), "auto")
+        self.container.addItem(self._auto_container_text(), "auto")
         names = ("mkv", "mp4", "webm") if video else ("m4a", "opus", "mkv", "mp4", "webm")
         for name in names:
             available = self._selection is not None and name in self._selection["containers"]
@@ -482,7 +532,9 @@ class Window(QWidget):
             self.qualities.setText(self.detail.text())
         self.confirm.setEnabled(not self.downloader.busy and self._selection is not None)
         self._update_buttons()
-        self.quality.setEnabled(not self.downloader.busy and (video or audio))
+        self.quality.setEnabled(not self.downloader.busy and (video or (audio and len(self._audio_track_ids) == 1)))
+        self.audio_tracks_button.setEnabled(not self.downloader.busy and audio)
+        self._update_track_summary()
         self.container.setEnabled(not self.downloader.busy and self._selection is not None)
 
     def _confirm_download(self):
@@ -502,9 +554,14 @@ class Window(QWidget):
             self._set_status("preparing")
             self._set_detail()
             self.progress.setRange(0, 0)
+            extra = {}
+            if self.audio_check.isChecked() and len(self._audio_track_ids) > 1:
+                by_id = {track["id"]: track for track in self._audio_tracks()}
+                extra["audio_tracks"] = [stream | {"title": audio_track_text(by_id[key], self.language)}
+                                         for key, stream in zip(self._audio_track_ids, self._selection["audio_streams"], strict=True)]
             self.downloader.start(self._info["url"], self.downloads, self.components,
                                   container=container, format_id=self._selection["format_id"],
-                                  video=self.video_check.isChecked(), audio=self.audio_check.isChecked(), auth=self._download_auth())
+                                  video=self.video_check.isChecked(), audio=self.audio_check.isChecked(), auth=self._download_auth(), **extra)
         except (OSError, ValueError) as error:
             self._finished("error", str(error))
 
@@ -515,9 +572,10 @@ class Window(QWidget):
         self.cancel.setEnabled(busy)
         self.confirm.setEnabled(not busy and self._selection is not None)
         self.container.setEnabled(not busy and self._selection is not None)
-        self.quality.setEnabled(not busy and self._info is not None and (self.video_check.isChecked() or self.audio_check.isChecked()))
+        self.quality.setEnabled(not busy and self._info is not None and (self.video_check.isChecked() or (self.audio_check.isChecked() and len(self._audio_track_ids) == 1)))
         self.video_check.setEnabled(not busy)
         self.audio_check.setEnabled(not busy)
+        self.audio_tracks_button.setEnabled(not busy and self.audio_check.isChecked())
         self.choose_folder.setEnabled(not busy)
         self.authentication.setEnabled(not busy)
         self._update_buttons()

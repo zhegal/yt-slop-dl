@@ -1,6 +1,6 @@
 ; Build with python build.py --installer. No user data or credentials are packaged.
 #ifndef AppVersion
-  #define AppVersion "0.1.0"
+  #define AppVersion "0.2.0"
 #endif
 
 [Setup]

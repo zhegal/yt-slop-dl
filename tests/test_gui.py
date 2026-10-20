@@ -107,7 +107,8 @@ def test_window_launch_and_validation(qt_app, language):
     qt_app.processEvents()
     try:
         assert window.isVisible()
-        assert window.windowTitle() == "YT Slop DL"
+        from app import __version__
+        assert window.windowTitle() == f"YT Slop DL {__version__}"
         assert window.download.text() == translate(language, "analysis")
         window.url.setText("https://invalid.example/video")
         window.download.click()
@@ -253,6 +254,91 @@ def test_quality_and_video_audio_checkboxes(qt_app, monkeypatch):
     assert not window.video_check.isEnabled() and not window.quality.isEnabled()
     window._busy(False)
     window.close()
+
+
+@pytest.mark.parametrize('language', ['ru', 'uk', 'en'])
+def test_audio_tracks_dialog_and_download_summary(qt_app, monkeypatch, language):
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication
+    from app.audio_dialog import AudioTracksDialog
+    from test_media import selectable_info
+    window = Window(language)
+    window.show()
+    calls = []
+    monkeypatch.setattr(window.downloader, 'start', lambda *args, **kw: calls.append(kw))
+    info = selectable_info() | {'url':'https://www.youtube.com/watch?v=abcdefghijk'}
+    window.url.setText(info['url'])
+    window._show_info(info)
+    window._finished('inspected', '')
+    assert not calls and window._audio_track_ids == ['en']
+    assert window.audio_tracks_button.text() == translate(language, 'audio_tracks_button')
+    def choose(ids, primary, cancel=False):
+        def apply():
+            dialog = QApplication.activeModalWidget()
+            assert isinstance(dialog, AudioTracksDialog)
+            for key, check in dialog.checks.items():
+                check.setChecked(key in ids)
+            if ids:
+                dialog.primary_buttons[primary].setChecked(True)
+            assert dialog.apply_button.isEnabled() == bool(ids)
+            dialog.reject() if cancel else dialog.apply_button.click()
+        QTimer.singleShot(0, apply)
+        window.audio_tracks_button.click()
+    window.quality.setCurrentIndex(window.quality.findData('low'))
+    choose(['en','uk'], 'uk')
+    assert window._audio_track_ids == ['uk','en']
+    assert window.quality.currentData() == 'low'
+    assert window.audio_tracks_summary.text().index('Українська') < window.audio_tracks_summary.text().index('English')
+    assert translate(language, 'primary_audio_track') in window.audio_tracks_summary.text()
+    window.confirm.click()
+    assert calls[-1]['format_id'] == 'low+other-language+audio-high'
+    assert [track['language'] for track in calls[-1]['audio_tracks']] == ['uk','en']
+    window.language_combo.setCurrentIndex(window.language_combo.findData('en' if language != 'en' else 'ru'))
+    assert window._audio_track_ids == ['uk','en']
+    choose(['en'], 'en', cancel=True)
+    assert window._audio_track_ids == ['uk','en']
+    choose([], None, cancel=True)
+    assert window._audio_track_ids == ['uk','en']
+    window.video_check.setChecked(False)
+    assert not window.quality.isEnabled() and window.quality.count() == 1
+    window.confirm.click()
+    assert calls[-1]['format_id'] == 'other-language+audio-high' and not calls[-1]['video']
+    assert window.container.currentText() == translate(window.language, 'auto_multitrack')
+    assert not window.container.model().item(window.container.findData('opus')).isEnabled()
+    choose(['en'], 'en')
+    assert window.quality.isEnabled() and window.quality.count() == 2
+    window.quality.setCurrentIndex(window.quality.findData('audio-low'))
+    window.confirm.click()
+    assert calls[-1]['format_id'] == 'audio-low' and 'audio_tracks' not in calls[-1]
+    window._busy(True)
+    assert not window.audio_tracks_button.isEnabled()
+    window._busy(False)
+    assert window.audio_tracks_button.isEnabled()
+    window.video_check.setChecked(True)
+    window.audio_check.setChecked(False)
+    assert not window.audio_tracks_button.isEnabled()
+    assert window.audio_tracks_summary.text() == translate(window.language, 'audio_disabled')
+    window.audio_check.setChecked(True)
+    assert window.audio_tracks_button.isEnabled() and window._audio_track_ids == ['en']
+    choose(['uk'], 'uk')
+    window._show_info(info)
+    assert window._audio_track_ids == ['en']
+    window.url.setText('https://youtu.be/12345678901')
+    assert window._info is None and not window.preview.isVisible()
+    window.close()
+
+
+def test_unchecking_primary_chooses_another_selected_track(qt_app):
+    from app.audio_dialog import AudioTracksDialog
+    from test_media import selectable_info
+    dialog = AudioTracksDialog('ru', selectable_info()['audio_tracks'], ['en'])
+    assert not dialog.primary_buttons['uk'].isEnabled()
+    dialog.checks['uk'].setChecked(True)
+    dialog.checks['en'].setChecked(False)
+    assert dialog.primary_buttons['uk'].isChecked()
+    assert not dialog.primary_buttons['en'].isEnabled()
+    dialog.accept()
+    assert dialog.selected_ids == ['uk']
 
 
 def test_choose_destination_cancel_and_open_saved_folder(qt_app, tmp_path, monkeypatch):

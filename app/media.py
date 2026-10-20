@@ -33,9 +33,12 @@ def summarize_info(info: dict) -> dict:
     ids = [str(f["format_id"]) for f in streams]
     resolutions = sorted({int(f["height"]) for f in info.get("formats", [])
                           if f.get("height") and f.get("vcodec") not in {None, "none", "images"} and not f.get("has_drm")})
-    video_options, audio_options = stream_options(info, video, audio)
+    video_options, tracks = stream_options(info, video, audio)
+    default_track = next(track for track in tracks if track["id"] == audio_track_key(audio))
     return {
-        "video_options": video_options, "audio_options": audio_options,
+        "video_options": video_options, "audio_options": default_track["options"],
+        "audio_tracks": [default_track, *(track for track in tracks if track is not default_track)],
+        "default_audio_track": default_track["id"],
         "id": str(info["id"]), "title": str(info.get("title") or info["id"])[:300],
         "duration": info.get("duration"), "channel": str(info.get("channel") or info.get("uploader") or "")[:200],
         "width": video.get("width"), "height": video.get("height"), "fps": video.get("fps"),
@@ -45,6 +48,22 @@ def summarize_info(info: dict) -> dict:
     }
 
 
+def audio_track_key(stream: dict) -> str:
+    track = stream.get("audio_track") or {}
+    return str(track.get("id") or stream.get("language") or "und")
+
+
+def audio_options_for(info: dict, track_id: str | None = None) -> list:
+    tracks = info.get("audio_tracks")
+    if not tracks:
+        return info["audio_options"]
+    track_id = track_id if track_id is not None else info["default_audio_track"]
+    track = next((track for track in tracks if track["id"] == track_id), None)
+    if not track:
+        raise ValueError("unavailable_audio_track")
+    return track["options"]
+
+
 def stream_options(info: dict, best_video: dict, best_audio: dict) -> tuple[list, list]:
     # yt-dlp has already ranked formats from worst to best. Preserve its ranking
     # within each resolution/frame-rate group instead of implementing a sorter.
@@ -52,6 +71,7 @@ def stream_options(info: dict, best_video: dict, best_audio: dict) -> tuple[list
     def compact(f):
         return {key: f.get(key) for key in ("format_id", "height", "width", "fps", "abr", "ext", "language")} | {
             "vcodec": codec_name(f.get("vcodec")), "acodec": codec_name(f.get("acodec")),
+            "track_id": audio_track_key(f),
             "drc": "DRC" in str(f.get("format_note", "")).upper() or str(f.get("format_id", "")).endswith("-drc"),
         }
     groups = {}
@@ -64,39 +84,74 @@ def stream_options(info: dict, best_video: dict, best_audio: dict) -> tuple[list
         if previous is None or f.get("acodec") == "none" or previous.get("acodec") != "none":
             groups[key] = f
     videos = [compact(groups[key]) for key in sorted(groups, reverse=True)]
-    audios = {}
+    tracks = {}
     for f in [*formats, best_audio]:
-        if f.get("acodec") in {None, "none"} or f.get("vcodec") != "none" or not f.get("format_id"):
+        if f.get("acodec") in {None, "none"} or not f.get("format_id"):
             continue
-        # Quality selection must not switch to a dub in another language.
-        if f.get("language") != best_audio.get("language"):
+        if f.get("vcodec") != "none" and best_audio.get("vcodec") == "none" and audio_track_key(f) == "und":
             continue
-        track = f.get("audio_track") or {}
-        best_track = best_audio.get("audio_track") or {}
-        if track.get("id") != best_track.get("id"):
-            continue
-        audios.pop(str(f["format_id"]), None)
-        audios[str(f["format_id"])] = compact(f)
-    if not audios:
-        audios[str(best_audio["format_id"])] = compact(best_audio)
-    return videos, list(audios.values())[::-1]
+        key = audio_track_key(f)
+        track = tracks.setdefault(key, {"id": key, "language": f.get("language"),
+                                       "name": (f.get("audio_track") or {}).get("displayName"),
+                                       "original": False, "options": {}})
+        track["original"] |= "original" in f"{f.get('format_note', '')} {track['name'] or ''}".lower()
+        options = track["options"]
+        separate = f.get("vcodec") == "none"
+        # Combined files are a fallback only when this track has no separate audio.
+        if options:
+            previous_separate = next(iter(options.values()))["vcodec"] == "none"
+            if not separate and previous_separate:
+                continue
+            if separate != previous_separate or not separate:
+                options.clear()
+        options.pop(str(f["format_id"]), None)
+        options[str(f["format_id"])] = compact(f)
+    for track in tracks.values():
+        track["options"] = list(track["options"].values())[::-1]
+    return videos, list(tracks.values())
 
 
-def select_streams(info: dict, quality_id: str, video: bool = True, audio: bool = True) -> dict:
+def select_streams(info: dict, quality_id: str, video: bool = True, audio: bool = True, *, audio_track_id: str | None = None,
+                   audio_track_ids: list[str] | None = None) -> dict:
     if not video and not audio:
         raise ValueError("empty_selection")
-    options = info["video_options"] if video else info["audio_options"]
+    if audio and audio_track_ids is not None:
+        if not audio_track_ids:
+            raise ValueError("empty_audio_tracks")
+        if len(set(audio_track_ids)) != len(audio_track_ids):
+            raise ValueError("unavailable_audio_track")
+        result = select_streams(info, quality_id, video, audio, audio_track_id=audio_track_ids[0])
+        streams = [audio_options_for(info, track_id)[0] for track_id in audio_track_ids]
+        if not video:
+            streams[0] = next(f for f in audio_options_for(info, audio_track_ids[0]) if str(f["format_id"]) == quality_id)
+        if len(streams) > 1:
+            selected_video = next((f for f in info["video_options"] if str(f["format_id"]) == quality_id), None) if video else None
+            if any(f["vcodec"] != "none" for f in streams) or (selected_video and selected_video["acodec"] != "none"):
+                raise ValueError("multitrack_unavailable")
+            result["format_id"] = "+".join(([quality_id] if video else []) + [str(f["format_id"]) for f in streams])
+            result["containers"] = [name for name in ("mkv", "mp4", "webm")
+                                    if all(name in available_containers(result["vcodec"], f["acodec"]) for f in streams)]
+        result["audio_streams"] = [{"format_id": str(f["format_id"]), "language": f.get("language")} for f in streams]
+        return result
+    audio_options = audio_options_for(info, audio_track_id) if audio else []
+    options = info["video_options"] if video else audio_options
     selected = next((f for f in options if str(f["format_id"]) == quality_id), None)
     if not selected:
         raise ValueError("unavailable_quality")
     if video and not audio and selected["acodec"] != "none":
         raise ValueError("video_only_unavailable")
-    audio_stream = info["audio_options"][0] if video and audio and selected["acodec"] == "none" else selected
+    if video and audio and selected["acodec"] != "none":
+        wanted = audio_options[0].get("track_id")
+        embedded = selected.get("track_id")
+        if wanted != embedded and (selected.get("language") or embedded not in {None, "und"}
+                                   or audio_track_id is not None):
+            raise ValueError("audio_track_unavailable_for_quality")
+    audio_stream = audio_options[0] if video and audio and selected["acodec"] == "none" else selected
     ids = [str(selected["format_id"])]
     if video and audio and selected["acodec"] == "none":
         # Avoid adding a second video through a combined fallback.
         if audio_stream["vcodec"] != "none":
-            raise ValueError("unavailable_quality")
+            raise ValueError("audio_track_unavailable_for_quality")
         ids.append(str(audio_stream["format_id"]))
     vcodec = selected["vcodec"] if video else "none"
     acodec = audio_stream["acodec"] if audio else "none"

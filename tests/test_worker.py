@@ -8,6 +8,41 @@ import pytest
 from app.worker import publish_file, run_download, tool_environment
 
 
+@pytest.mark.parametrize('defaults', [[1,0], [0,0], [1,1], [1]])
+def test_multitrack_result_verified_before_publish(tmp_path, monkeypatch, defaults):
+    import io
+    from types import SimpleNamespace
+    import app.worker as worker
+    staging = tmp_path/'stage'
+    staging.mkdir()
+    result = staging/'video.mkv'
+    result.write_bytes(b'completed media')
+    downloads = tmp_path/'out'
+    downloads.mkdir()
+    tools = {name:tmp_path/name for name in ('yt-dlp','ffmpeg','ffprobe','deno')}
+    monkeypatch.setattr(worker, 'ensure_dependencies', lambda *_: tools)
+    monkeypatch.setattr(worker, 'apply_update', lambda *_: None)
+    monkeypatch.setattr(worker, 'emit', lambda *_: None)
+    class Process:
+        stdout = io.StringIO('MD_FILE' + json.dumps(str(result)) + '\n')
+        def __enter__(self): return self
+        def __exit__(self, *_): pass
+        def wait(self): return 0
+    monkeypatch.setattr(worker.subprocess, 'Popen', lambda *args, **kw: Process())
+    streams = [{'codec_type':'video'}] + [{'codec_type':'audio', 'disposition':{'default':d}} for d in defaults]
+    monkeypatch.setattr(worker.subprocess, 'run', lambda *args, **kw: SimpleNamespace(stdout=json.dumps({'streams':streams})))
+    request = {'url':'https://youtu.be/abcdefghijk','downloads':str(downloads),'staging':str(staging),
+               'components':str(tmp_path/'components'),'format_id':'video+ru+en',
+               'audio_tracks':[{'language':'ru'}, {'language':'en'}]}
+    if defaults == [1,0]:
+        assert run_download(request) == 0
+        assert (downloads/'video.mkv').is_file()
+    else:
+        with pytest.raises(RuntimeError, match='audio tracks or the default track'):
+            run_download(request)
+        assert not list(downloads.iterdir())
+
+
 def test_publish_preserves_existing_unicode_file(tmp_path):
     source = tmp_path / "staging" / "Відео [123].mkv"
     source.parent.mkdir()

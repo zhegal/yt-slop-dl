@@ -14,6 +14,8 @@ import app.downloader as module
 FAKE_WORKER = r'''
 import json, pathlib, subprocess, sys, time
 r = json.loads(sys.stdin.readline())
+if r.get('audio_tracks'):
+    print(json.dumps({'type':'received_tracks','tracks':r['audio_tracks'],'format_id':r['format_id']}), flush=True)
 if r.get('action') == 'check_updates':
     print(json.dumps({'type':'update_checked','status':'available','version':'2099.01.02'}), flush=True)
     sys.exit(0)
@@ -56,6 +58,20 @@ def fake_worker(monkeypatch):
         def setArguments(self, args):
             super().setArguments(["-u", "-c", FAKE_WORKER])
     monkeypatch.setattr(module, "QProcess", FakeWorker)
+
+
+def test_multiple_tracks_cross_worker_boundary_in_order(qt_app, tmp_path, fake_worker):
+    downloader = module.Downloader()
+    events, finished = [], []
+    downloader.event.connect(events.append)
+    downloader.finished.connect(lambda *result: finished.append(result))
+    tracks = [{'language':'ru','title':'Русский'}, {'language':'uk','title':'Українська'}, {'language':'en','title':'English'}]
+    downloader.start('https://youtu.be/12345678901', tmp_path/'out', tmp_path/'components',
+                     format_id='v+ru+uk+en', audio_tracks=tracks)
+    pump_until(qt_app, lambda: bool(finished))
+    event = next(e for e in events if e['type']=='received_tracks')
+    assert event['tracks'] == tracks and event['format_id'] == 'v+ru+uk+en'
+    assert finished[0][0] == 'success'
 
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX integration test; Windows Job Object requires Windows")

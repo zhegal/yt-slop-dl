@@ -8,6 +8,15 @@ import pytest
 from build import SIGNING_CONFIG, signing_identity
 
 
+def test_release_versions_agree():
+    import tomllib
+    from pathlib import Path
+    from app import __version__
+    root = Path(__file__).resolve().parents[1]
+    assert tomllib.loads((root/'pyproject.toml').read_text())['project']['version'] == __version__ == '0.2.0'
+    assert f'#define AppVersion "{__version__}"' in (root/'packaging/windows.iss').read_text()
+
+
 FIRST = "A" * 40
 SECOND = "B" * 40
 

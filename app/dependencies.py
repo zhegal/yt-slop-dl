@@ -1,5 +1,7 @@
 """Private, checksum-verified tools. No PATH lookup or global installation."""
 
+from app import __version__
+
 import hashlib
 import json
 import os
@@ -94,7 +96,7 @@ def verify_checksum(path: Path, expected: str) -> None:
 def open_url(url: str, *, timeout=30):
     if not url.startswith("https://"):
         raise DependencyError("Component downloads require HTTPS.")
-    req = urllib.request.Request(url, headers={"User-Agent": "YTSlopDL/0.1", "Accept": "application/vnd.github+json"} if url.startswith("https://api.github.com/") else {"User-Agent": "YTSlopDL/0.1"})
+    req = urllib.request.Request(url, headers={"User-Agent": f"YTSlopDL/{__version__}", "Accept": "application/vnd.github+json"} if url.startswith("https://api.github.com/") else {"User-Agent": f"YTSlopDL/{__version__}"})
     return urllib.request.urlopen(req, timeout=timeout)
 
 

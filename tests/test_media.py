@@ -116,6 +116,90 @@ def test_audio_only_combined_fallback():
     assert args[args.index('--remux-video')+1] == 'm4a'
 
 
+def test_audio_track_selection_for_video_and_audio_only():
+    from app.media import audio_options_for, select_streams
+    info = selectable_info()
+    assert info['default_audio_track'] == 'en'
+    assert [track['id'] for track in info['audio_tracks']] == ['en', 'uk']
+    assert [f['format_id'] for f in audio_options_for(info, 'uk')] == ['other-language']
+    assert select_streams(info, 'low', audio_track_id='uk')['format_id'] == 'low+other-language'
+    assert select_streams(info, 'other-language', video=False, audio_track_id='uk')['format_id'] == 'other-language'
+    assert select_streams(info, 'low', audio=False, audio_track_id='missing')['format_id'] == 'low'
+    with pytest.raises(ValueError, match='unavailable_audio_track'):
+        select_streams(info, 'low', audio_track_id='missing')
+    with pytest.raises(ValueError, match='unavailable_quality'):
+        select_streams(info, 'audio-high', video=False, audio_track_id='uk')
+    # A combined file must never silently retain its embedded original audio
+    # when the user explicitly selected a dub.
+    with pytest.raises(ValueError, match='audio_track_unavailable_for_quality'):
+        select_streams(info, 'combined', audio_track_id='uk')
+    with pytest.raises(ValueError, match='audio_track_unavailable_for_quality'):
+        select_streams(info, 'combined', audio_track_id='en')
+
+
+def test_multiple_tracks_preserve_primary_order_and_intersect_containers(tmp_path):
+    from app.media import select_streams
+    info = selectable_info()
+    selected = select_streams(info, 'high', audio_track_ids=['uk','en'])
+    assert selected['format_id'] == 'high+other-language+audio-high'
+    assert [s['language'] for s in selected['audio_streams']] == ['uk','en']
+    assert selected['containers'] == ['mkv','mp4','webm']
+    selected = select_streams(info, 'audio-low', video=False, audio_track_ids=['en','uk'])
+    assert selected['format_id'] == 'audio-low+other-language'
+    assert selected['containers'] == ['mkv','mp4']
+    tools = {k:tmp_path/k for k in ('ffmpeg','deno')}
+    args = build_arguments('https://youtu.be/abcdefghijk', tmp_path, tools, format_id=selected['format_id'],
+                           video=False, audio_tracks=selected['audio_streams'])
+    assert '--audio-multistreams' in args and '--extract-audio' not in args
+    assert args[args.index('--merge-output-format')+1] == 'mkv'
+    assert args[args.index('--remux-video')+1] == 'mkv'
+    assert '--no-embed-info-json' in args
+    assert '-disposition:a:0 default' in args[-3] and '-disposition:a:1 0' in args[-3]
+    with pytest.raises(ValueError, match='Invalid multitrack'):
+        build_arguments('https://youtu.be/abcdefghijk', tmp_path, tools, 'opus', selected['format_id'],
+                        video=False, audio_tracks=selected['audio_streams'])
+    for ids, error in [([], 'empty_audio_tracks'), (['en','en'], 'unavailable_audio_track'),
+                       (['en','missing'], 'unavailable_audio_track')]:
+        with pytest.raises(ValueError, match=error):
+            select_streams(info, 'high', audio_track_ids=ids)
+    with pytest.raises(ValueError, match='unavailable'):
+        select_streams(info, 'combined', audio_track_ids=['en','uk'])
+    assert select_streams(info, 'low', audio=False, audio_track_ids=[])['format_id'] == 'low'
+
+
+def test_track_grouping_keeps_variants_and_quality_ranking():
+    from app.media import audio_options_for, select_streams
+    video = {'format_id':'v', 'height':720, 'vcodec':'h264', 'acodec':'none'}
+    audio = {'vcodec':'none', 'acodec':'opus', 'language':'en', 'audio_track':{'id':'en.1', 'displayName':'Narrator one'}}
+    default = audio | {'format_id':'best', 'format_note':'English original (default), medium'}
+    info = summarize_info({'id':'abcdefghijk', 'requested_formats':[video, default], 'formats':[
+        video, audio | {'format_id':'low-drc', 'abr':48},
+        audio | {'format_id':'other', 'audio_track':{'id':'en.2', 'displayName':'Narrator two'}},
+        audio | {'format_id':'description', 'language':'en-desc', 'audio_track':{}},
+        audio | {'format_id':'protected', 'language':'fr', 'has_drm':True},
+        default,
+    ]})
+    assert {track['id'] for track in info['audio_tracks']} == {'en.1', 'en.2', 'en-desc'}
+    assert info['audio_tracks'][0]['original']
+    assert [f['format_id'] for f in audio_options_for(info, 'en.1')] == ['best','low-drc']
+    assert select_streams(info, 'v', audio_track_id='en.2')['format_id'] == 'v+other'
+    assert select_streams(info, 'v', audio_track_id='en-desc')['format_id'] == 'v+description'
+
+
+def test_track_available_only_in_combined_format_is_not_merged_twice():
+    from app.media import select_streams
+    video = {'format_id':'v', 'vcodec':'h264', 'acodec':'none', 'height':720}
+    english = {'format_id':'en', 'vcodec':'none', 'acodec':'aac', 'language':'en'}
+    french = {'format_id':'fr-combined', 'vcodec':'h264', 'acodec':'aac', 'language':'fr', 'height':360}
+    info = summarize_info({'id':'abcdefghijk','requested_formats':[video, english],'formats':[french,video,english]})
+    assert select_streams(info, 'fr-combined', audio_track_id='fr')['format_id'] == 'fr-combined'
+    assert select_streams(info, 'fr-combined', video=False, audio_track_id='fr')['format_id'] == 'fr-combined'
+    with pytest.raises(ValueError, match='audio_track_unavailable_for_quality'):
+        select_streams(info, 'v', audio_track_id='fr')
+    with pytest.raises(ValueError, match='audio_track_unavailable_for_quality'):
+        select_streams(info, 'fr-combined', audio_track_id='en')
+
+
 @pytest.mark.parametrize('video,audio,selector',[(True,False,'bestvideo'),(False,True,'bestaudio/best')])
 def test_single_stream_cli(tmp_path,video,audio,selector):
     tools = {k:tmp_path/k for k in ['ffmpeg','deno']}
