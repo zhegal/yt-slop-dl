@@ -13,7 +13,11 @@ dependencies = ["PySide6-Essentials>=6.8,<7"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8,<10"]
-build = ["pyinstaller>=6.11,<7"]
+build = [
+    "pyinstaller>=6.11,<7",
+    # Pin the Qt version used for verified Windows release bundles.
+    "PySide6-Essentials==6.8.3; sys_platform == 'win32'",
+]
 
 [project.gui-scripts]
 yt-slop-dl = "app.main:main"

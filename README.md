@@ -43,13 +43,32 @@ On startup the app asynchronously checks the latest **stable yt-dlp** release, a
 
 ## Desktop bundle
 
+### Windows release installer
+
+On Windows x64, install Python 3.12+, the `.[build]` dependencies and Inno Setup 6, then run:
+
+```powershell
+python build.py --installer
+# If the compiler is installed elsewhere:
+python build.py --installer --iscc "C:\path\to\ISCC.exe"
+```
+
+Send friends the single `dist/release/YT-Slop-DL-0.1.0-windows-x64-setup.exe` file.
+It installs for the current user without administrator privileges, adds a Start menu
+shortcut and an optional desktop shortcut, and supports uninstalling through Windows.
+Python and Qt are included. Windows 10/11 x64 is required. Internet access is required
+to install private media components on first analysis and to download videos.
+The release is unsigned; Windows may show an unknown-publisher/SmartScreen prompt.
+User settings, imported sessions and downloaded videos are not included in the installer
+and are preserved by uninstallation. Rebuild with the same AppId to update an installation.
+
 ```sh
 python build.py
 ```
 
 Run on the target OS with `.[build]` installed. PyInstaller creates an application under `dist/`: a clickable `.app` on macOS, an `.exe` directory on Windows, or a Linux executable with a local `.desktop` launcher. Keep the generated bundle together. Components are installed on first inspection, independently of the bundle. A macOS bundle can be moved to Applications.
 
-macOS builds use the existing stable bundle ID `YT Slop DL` and a real code-signing certificate from Keychain. If exactly one valid identity exists, it is selected automatically. Otherwise run `python build.py --codesign-identity '<certificate SHA-1 or name>'`. A successful build remembers its certificate SHA-1 in Git-ignored `config.local.signing.json`; private keys stay in Keychain. Later builds fail if that identity is unavailable instead of silently falling back to ad-hoc signing. Permissions must be granted once when migrating from the old ad-hoc build, then remain associated with the same signed app across rebuilds. Changing the bundle ID or signing identity can require new permission. `--ad-hoc` explicitly creates a disposable build without this guarantee. Development signing is for local use; notarization, distribution signing and installers remain outside the MVP.
+macOS builds use the existing stable bundle ID `YT Slop DL` and a real code-signing certificate from Keychain. If exactly one valid identity exists, it is selected automatically. Otherwise run `python build.py --codesign-identity '<certificate SHA-1 or name>'`. A successful build remembers its certificate SHA-1 in Git-ignored `config.local.signing.json`; private keys stay in Keychain. Later builds fail if that identity is unavailable instead of silently falling back to ad-hoc signing. Permissions must be granted once when migrating from the old ad-hoc build, then remain associated with the same signed app across rebuilds. Changing the bundle ID or signing identity can require new permission. `--ad-hoc` explicitly creates a disposable build without this guarantee. Development signing is for local use; notarization and distribution signing remain outside the MVP.
 
 ## MVP limits
 

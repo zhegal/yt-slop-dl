@@ -707,7 +707,8 @@ class Window(QWidget):
         self.downloads = self._saved_destination()
         self.destination.setText(self.t("destination", folder=self.downloads))
         self.destination.setToolTip(str(self.downloads))
-        desired = [str(self.downloads)] if self.downloads != self._default_downloads else []
+        # Windows reports renames through the parent directory watcher.
+        desired = [str(self.downloads), str(self.downloads.parent)] if self.downloads != self._default_downloads else []
         current = self.folder_watcher.directories()
         if current != desired:
             if current:

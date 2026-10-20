@@ -141,14 +141,14 @@ def test_open_downloaded_file_uses_default_app_and_handles_missing_file(qt_app, 
     assert window.open_file.text() == translate(language, 'open_file')
     assert window.open_file.x() < window.open_folder.x()
     window.open_file.click()
-    assert opened == [str(media)]
+    assert [Path(path) for path in opened] == [media]
     monkeypatch.setattr(QDesktopServices, 'openUrl', lambda _: False)
     window.open_file.click()
     assert window.detail.text() == translate(language, 'open_file_error', file=media.name)
     media.unlink()
     monkeypatch.setattr(QDesktopServices, 'openUrl', lambda url: opened.append(url.toLocalFile()) or True)
     window.open_file.click()
-    assert opened == [str(media)]
+    assert [Path(path) for path in opened] == [media]
     assert 'Моє відео' in window.detail.text()
     window.url.setText('https://youtu.be/abcdefghijk')
     assert not window.open_file.isVisible() and not window.open_folder.isVisible()
@@ -302,7 +302,7 @@ def test_choose_destination_cancel_and_open_saved_folder(qt_app, tmp_path, monke
     opened = []
     monkeypatch.setattr(QDesktopServices, 'openUrl', lambda url: opened.append(url.toLocalFile()) or True)
     window.open_folder.click()
-    assert opened == [str(first)]
+    assert [Path(path) for path in opened] == [first]
     window.close()
     # A fresh window and a fresh Python process must both restore the selection.
     fresh = Window('ru')

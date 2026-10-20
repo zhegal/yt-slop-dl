@@ -7,6 +7,8 @@ import platform
 import re
 import subprocess
 import sys
+import shutil
+import tomllib
 from pathlib import Path
 
 
@@ -39,12 +41,24 @@ def signing_identity(root: Path, requested: str | None = None) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--installer", action="store_true", help="Also build a Windows installer (requires Inno Setup 6)")
+    parser.add_argument("--iscc", help="Path to the Inno Setup compiler")
     signing = parser.add_mutually_exclusive_group()
     signing.add_argument("--codesign-identity", help="macOS Keychain certificate name/SHA-1; remembered locally")
     signing.add_argument("--ad-hoc", action="store_true", help="Disposable macOS build without persistent privacy identity")
     args = parser.parse_args()
     root = Path(__file__).resolve().parent
     system = platform.system()
+    compiler = None
+    if args.installer:
+        if system != "Windows" or platform.machine().lower() not in ("amd64", "x86_64"):
+            parser.error("The installer currently targets Windows x64 only.")
+        candidates = [args.iscc, shutil.which("ISCC"),
+                      str(root / ".tools" / "inno" / "ISCC.exe"),
+                      str(Path(os.environ.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Inno Setup 6" / "ISCC.exe")]
+        compiler = next((path for path in candidates if path and Path(path).is_file()), None)
+        if not compiler:
+            parser.error("Install Inno Setup 6 or pass --iscc PATH.")
     identity = signing_identity(root, args.codesign_identity) if system == "Darwin" and not args.ad_hoc else None
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6.QtCore import Qt
@@ -111,6 +125,10 @@ def main():
             f'Icon={icon}\nTerminal=false\nCategories=AudioVideo;\n', encoding="utf-8")
         desktop.chmod(0o755)
     print("Built desktop application in", root / "dist")
+    if args.installer:
+        version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
+        subprocess.run([compiler, f"/DAppVersion={version}", str(root / "packaging" / "windows.iss")],
+                       cwd=root, check=True)
     return 0
 
 

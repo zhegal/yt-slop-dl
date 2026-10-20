@@ -91,7 +91,10 @@ def test_browser_import_uses_offline_manifest_and_never_exposes_upstream_secrets
     monkeypatch.setattr(worker, 'apply_update', lambda *_: None)
     events = []
     monkeypatch.setattr(worker, 'emit', events.append)
+    real_run = worker.subprocess.run
     def run(args, **kwargs):
+        if args[0] in ('whoami', 'icacls'):
+            return real_run(args, **kwargs)
         assert args[args.index('--cookies-from-browser') + 1] == 'chrome:Default'
         assert not kwargs.get('shell')
         manifest = json.loads(Path(args[args.index('--load-info-json') + 1]).read_text())
